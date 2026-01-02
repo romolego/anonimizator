@@ -1,95 +1,72 @@
 @echo off
 chcp 65001 >nul
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
-REM ============================================================
-REM pull_main: fetch -> checkout main -> reset --hard origin/main
-REM (+ опционально clean -fd)
-REM ============================================================
+set "REPO=D:\projects\anonimizator"
 
 where git >nul 2>&1
 if errorlevel 1 (
-  echo ERROR: git не найден в PATH для cmd.exe
+  echo ERROR: git not found in PATH for cmd.exe
   goto :END_FAIL
 )
 
-cd /d "%~dp0.." 2>nul
-if errorlevel 1 (
-  echo ERROR: Не удалось перейти в "%~dp0.."
+if not exist "%REPO%\.git\" (
+  echo ERROR: .git not found in REPO: %REPO%
   goto :END_FAIL
 )
 
-set "TOP="
-for /f "delims=" %%T in ('git rev-parse --show-toplevel 2^>nul') do set "TOP=%%T"
-if "%TOP%"=="" (
-  echo ERROR: Не найден git repo root
-  echo PATH: %CD%
-  goto :END_FAIL
-)
-
-cd /d "%TOP%" 2>nul
-if errorlevel 1 (
-  echo ERROR: Не удалось перейти в корень репо: "%TOP%"
-  goto :END_FAIL
-)
-
-echo === REPO: %CD%
+echo === REPO: %REPO%
 echo.
 
-REM стоп, если есть незакоммиченные изменения
+REM Проверим, есть ли локальные изменения
 set "DIRTY="
-for /f "delims=" %%S in ('git status --porcelain 2^>nul') do set "DIRTY=1"
+for /f "delims=" %%S in ('git -C "%REPO%" status --porcelain 2^>nul') do set "DIRTY=1"
+
 if defined DIRTY (
-  echo ERROR: Есть незакоммиченные изменения. Сначала commit/push или откати.
+  echo WARNING: Есть локальные изменения. Они будут УДАЛЕНЫ.
   echo.
-  git status -sb
-  goto :END_FAIL
+  git -C "%REPO%" status -sb
+  echo.
+  set "CONFIRM="
+  set /p "CONFIRM=Продолжить и перетереть локалку из GitHub? (y/N): "
+
+  REM убираем пробелы (на всякий случай)
+  set "CONFIRM=!CONFIRM: =!"
+
+  if /i not "!CONFIRM!"=="y" (
+    echo CANCELLED.
+    goto :END_FAIL
+  )
 )
 
 echo === git fetch origin
-git fetch origin
-if errorlevel 1 (
-  echo ERROR: git fetch завершился с ошибкой
-  goto :END_FAIL
-)
+git -C "%REPO%" fetch origin
+if errorlevel 1 goto :END_FAIL
 
 echo.
 echo === git checkout main
-git checkout main >nul 2>&1
+git -C "%REPO%" checkout main >nul 2>&1
 if errorlevel 1 (
-  echo main локально не найден. Создаю main от origin/main...
-  git checkout -B main origin/main
-  if errorlevel 1 (
-    echo ERROR: не удалось создать/переключиться на main
-    goto :END_FAIL
-  )
+  echo main not found locally, creating from origin/main...
+  git -C "%REPO%" checkout -B main origin/main
+  if errorlevel 1 goto :END_FAIL
 )
 
 echo.
 echo === git reset --hard origin/main
-git reset --hard origin/main
-if errorlevel 1 (
-  echo ERROR: git reset --hard завершился с ошибкой
-  goto :END_FAIL
-)
+git -C "%REPO%" reset --hard origin/main
+if errorlevel 1 goto :END_FAIL
 
 echo.
-set "CLEAN="
-set /p "CLEAN=Run git clean -fd (delete untracked files)? (y/N): "
-if /i "%CLEAN%"=="y" (
-  echo === git clean -fd
-  git clean -fd
-  if errorlevel 1 (
-    echo ERROR: git clean -fd завершился с ошибкой
-    goto :END_FAIL
-  )
-)
+echo === git clean -fd
+git -C "%REPO%" clean -fd
+if errorlevel 1 goto :END_FAIL
 
 echo.
 echo === git status -sb (after)
-git status -sb
+git -C "%REPO%" status -sb
 echo.
-echo OK: main synced with origin/main
+echo OK: local main synced to origin/main (forced).
 goto :END_OK
 
 :END_FAIL
