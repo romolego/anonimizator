@@ -1,0 +1,7 @@
+(1) Работай в отдельной ветке feature/<short>: создай и переключись.
+(2) После изменений сделай git add . → git commit -m "<short msg>" → git push -u origin HEAD.
+(3) Создай PR feature/<short> → main и СРАЗУ сделай merge.
+(4) После merge обнови локальный main: git checkout main → git pull.
+(5) В конце выведи: имя ветки, хэш коммита, список изменённых файлов.
+
+Если что-то пошло не так с git/remote — остановись и покажи текст ошибки.
