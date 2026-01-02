@@ -1,1 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Псевдоанонимизация Excel-таблиц v0.1</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Псевдоанонимизация Excel-таблиц v0.1</h1>
+        
+        <!-- Промпт-подсказка -->
+        <div class="prompt-hint-section">
+            <button class="toggle-button" onclick="togglePromptHint(this)">▶ Промпт-подсказка</button>
+            <div class="prompt-hint-content" id="promptHintContent" style="display: none;">
+                <p>Значения вида [[...]] нельзя менять</p>
+                <button class="copy-button" onclick="copyPromptHint(this)">Копировать</button>
+            </div>
+        </div>
 
+        <!-- Загрузка файла -->
+        <div class="section">
+            <h2>1. Загрузка файла</h2>
+            <input type="file" id="fileInput" accept=".xlsx,.xls" />
+        </div>
+
+        <!-- Выбор листа -->
+        <div class="section" id="sheetSelection" style="display: none;">
+            <h2>2. Выбор листа</h2>
+            <select id="sheetSelect"></select>
+        </div>
+
+        <!-- Исходная таблица -->
+        <div class="section" id="originalTableSection" style="display: none;">
+            <h2>3. Исходная таблица</h2>
+            <div class="table-container">
+                <table id="originalTable"></table>
+            </div>
+        </div>
+
+        <!-- Выбор столбцов -->
+        <div class="section" id="columnSelection" style="display: none;">
+            <h2>4. Выбор столбцов для токенизации</h2>
+            <div id="columnCheckboxes"></div>
+            <button onclick="tokenizeColumns()">Токенизировать</button>
+        </div>
+
+        <!-- Результат токенизации -->
+        <div class="section" id="tokenizedTableSection" style="display: none;">
+            <h2>5. Результат токенизации</h2>
+            <div class="table-container">
+                <table id="tokenizedTable"></table>
+            </div>
+            <div class="download-buttons">
+                <button onclick="downloadCSV()">Скачать CSV</button>
+                <button onclick="downloadJSON()">Скачать JSON-словарь</button>
+            </div>
+        </div>
+
+        <!-- Детокенизация -->
+        <div class="section" id="detokenizationSection">
+            <h2>Детокенизация</h2>
+            
+            <div class="detokenization-controls">
+                <div class="control-group">
+                    <label for="jsonInput">Импорт JSON-словаря:</label>
+                    <input type="file" id="jsonInput" accept=".json" />
+                </div>
+            </div>
+
+            <div class="detokenization-layout">
+                <div class="text-area-container">
+                    <label for="responseTextarea">Ответ нейросети:</label>
+                    <textarea id="responseTextarea" placeholder="Вставьте текст с токенами [[...]]"></textarea>
+                </div>
+                
+                <div class="tokens-list-container">
+                    <h3>Найденные токены</h3>
+                    <div id="tokensList"></div>
+                </div>
+            </div>
+
+            <div class="detokenized-result">
+                <h3>Детокенизированный текст</h3>
+                <div id="detokenizedText" class="result-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="xlsx.full.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
