@@ -10,51 +10,64 @@
     <div class="container">
         <h1>Псевдоанонимизация Excel-таблиц v0.1</h1>
         
-        <!-- Промпт-подсказка -->
-        <div class="prompt-hint-section">
-            <button class="toggle-button" onclick="togglePromptHint(this)">▶ Промпт-подсказка</button>
-            <div class="prompt-hint-content" id="promptHintContent" style="display: none;">
-                <p>Значения вида [[...]] нельзя менять</p>
-                <button class="copy-button" onclick="copyPromptHint(this)">Копировать</button>
-            </div>
-        </div>
-
-        <!-- Загрузка файла -->
+        <!-- Загрузка файла и управление -->
         <div class="section">
-            <h2>1. Загрузка файла</h2>
-            <input type="file" id="fileInput" accept=".xlsx,.xls" />
-        </div>
-
-        <!-- Выбор листа -->
-        <div class="section" id="sheetSelection" style="display: none;">
-            <h2>2. Выбор листа</h2>
-            <select id="sheetSelect"></select>
-        </div>
-
-        <!-- Исходная таблица -->
-        <div class="section" id="originalTableSection" style="display: none;">
-            <h2>3. Исходная таблица</h2>
-            <div class="table-container">
-                <table id="originalTable"></table>
+            <h2>Загрузка файла</h2>
+            <div class="file-controls-row">
+                <div class="file-control-item">
+                    <label for="fileInput">Выбор файла XLSX:</label>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls" />
+                </div>
+                <div class="file-control-item" id="sheetSelectionWrapper" style="display: none;">
+                    <label for="sheetSelect">Выбор листа:</label>
+                    <select id="sheetSelect"></select>
+                </div>
+                <div class="file-control-item">
+                    <button id="clearButton" onclick="clearAll()" style="display: none;">Очистить</button>
+                </div>
             </div>
         </div>
 
-        <!-- Выбор столбцов -->
-        <div class="section" id="columnSelection" style="display: none;">
-            <h2>4. Выбор столбцов для токенизации</h2>
-            <div id="columnCheckboxes"></div>
-            <button onclick="tokenizeColumns()">Токенизировать</button>
-        </div>
-
-        <!-- Результат токенизации -->
-        <div class="section" id="tokenizedTableSection" style="display: none;">
-            <h2>5. Результат токенизации</h2>
-            <div class="table-container">
-                <table id="tokenizedTable"></table>
+        <!-- Таблицы: исходная и результат -->
+        <div class="section" id="tablesSection" style="display: none;">
+            <h2>Таблицы</h2>
+            <div class="tables-comparison">
+                <div class="table-wrapper">
+                    <h3>Исходная таблица</h3>
+                    <div class="table-container" id="originalTableContainer">
+                        <table id="originalTable"></table>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <h3>Результат токенизации</h3>
+                    <div class="table-container" id="tokenizedTableContainer">
+                        <table id="tokenizedTable"></table>
+                    </div>
+                </div>
             </div>
-            <div class="download-buttons">
-                <button onclick="downloadCSV()">Скачать CSV</button>
-                <button onclick="downloadJSON()">Скачать JSON-словарь</button>
+            
+            <div class="download-section" id="downloadSection" style="display: none;">
+                <h3>Экспорт</h3>
+                <div class="download-buttons">
+                    <button onclick="downloadCSV()">Скачать CSV</button>
+                    <button onclick="downloadXLSX()">Скачать XLSX</button>
+                    <button onclick="downloadJSON()">Скачать JSON-словарь</button>
+                    <button class="prompt-toggle-button" onclick="togglePromptSection(this)">▶ Промпт для нейросети</button>
+                </div>
+                <div class="prompt-section" id="promptSection" style="display: none;">
+                    <textarea id="promptTextarea" readonly>В тексте ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
+Жёсткое правило: не изменяй токены [[...]] ни при каких условиях.
+(1) Не меняй внутри токена ни одного символа: буквы/цифры/знаки, регистр, длину.
+(2) Не добавляй и не удаляй пробелы, переносы строк, кавычки или любые символы внутри токена.
+(3) Не разбивай токен на части и не объединяй токены между собой.
+(4) Не пытайся "расшифровать" токены, не придумывай исходные значения.
+(5) Если нужно сослаться на значение — используй токен ровно как он дан, целиком, включая [[ и ]].
+Если токен встречается несколько раз — считай, что это одно и то же значение.</textarea>
+                    <button class="copy-button" onclick="copyPromptText(this)">Копировать</button>
+                </div>
             </div>
         </div>
 
@@ -71,8 +84,9 @@
 
             <div class="detokenization-layout">
                 <div class="text-area-container">
-                    <label for="responseTextarea">Ответ нейросети:</label>
+                    <label for="responseTextarea">Ответ нейросети (сырой):</label>
                     <textarea id="responseTextarea" placeholder="Вставьте текст с токенами [[...]]"></textarea>
+                    <div class="stats-summary" id="statsSummary"></div>
                 </div>
                 
                 <div class="tokens-list-container">
@@ -82,7 +96,10 @@
             </div>
 
             <div class="detokenized-result">
-                <h3>Детокенизированный текст</h3>
+                <div class="result-header">
+                    <h3>Ответ (детокенизированный)</h3>
+                    <button class="copy-button" onclick="copyDetokenizedText(this)">Копировать</button>
+                </div>
                 <div id="detokenizedText" class="result-text"></div>
             </div>
         </div>
