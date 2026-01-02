@@ -2,10 +2,8 @@
 chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
-REM === НАСТРОЙКА: путь к репозиторию ===
 set "REPO=D:\projects\anonimizator"
 
-REM --- проверки ---
 where git >nul 2>&1
 if errorlevel 1 (
   echo ERROR: git not found in PATH for cmd.exe
@@ -17,7 +15,6 @@ if not exist "%REPO%\.git\" (
   goto :END_FAIL
 )
 
-REM --- branch ---
 set "BRANCH="
 for /f "delims=" %%B in ('git -C "%REPO%" rev-parse --abbrev-ref HEAD 2^>nul') do set "BRANCH=%%B"
 if "%BRANCH%"=="" (
@@ -38,13 +35,11 @@ echo === git add -A
 git -C "%REPO%" add -A
 if errorlevel 1 goto :END_FAIL
 
-REM --- staged? ---
+REM commit if staged changes exist
 git -C "%REPO%" diff --cached --quiet
 if errorlevel 1 goto :DO_COMMIT
-
-echo.
 echo === nothing to commit (staged empty)
-goto :DO_PUSH
+goto :SYNC_AND_PUSH
 
 :DO_COMMIT
 echo.
@@ -56,31 +51,32 @@ echo === git commit -m "!MSG!"
 git -C "%REPO%" commit -m "!MSG!"
 if errorlevel 1 goto :END_FAIL
 
-:DO_PUSH
+:SYNC_AND_PUSH
 echo.
-echo === git push
-set "TMP=%TEMP%\git_push_%RANDOM%.log"
-git -C "%REPO%" push > "%TMP%" 2>&1
-if errorlevel 1 goto :PUSH_FAILED
+echo === git fetch origin
+git -C "%REPO%" fetch origin
+if errorlevel 1 goto :END_FAIL
 
-goto :PUSH_OK
-
-:PUSH_FAILED
-REM Если нет upstream — повторяем с -u origin <branch>
-findstr /i /c:"has no upstream branch" "%TMP%" >nul 2>&1
-if not errorlevel 1 (
-  echo === no upstream, running: git push -u origin %BRANCH%
-  git -C "%REPO%" push -u origin "%BRANCH%"
-  if errorlevel 1 goto :PUSH_SHOW_ERROR
-  goto :PUSH_OK
+echo === git pull --rebase origin %BRANCH%
+git -C "%REPO%" pull --rebase origin "%BRANCH%"
+if errorlevel 1 (
+  echo.
+  echo ERROR: rebase failed. Resolve conflicts, then run:
+  echo   git add -A
+  echo   git rebase --continue
+  echo After that, run this .bat again.
+  goto :END_FAIL
 )
 
-:PUSH_SHOW_ERROR
-echo ERROR: git push failed:
-type "%TMP%"
-goto :END_FAIL
+echo.
+echo === git push
+git -C "%REPO%" push
+if errorlevel 1 (
+  echo.
+  echo ERROR: git push failed.
+  goto :END_FAIL
+)
 
-:PUSH_OK
 echo.
 echo === git status -sb (after)
 git -C "%REPO%" status -sb
