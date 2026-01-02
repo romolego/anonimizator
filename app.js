@@ -6,33 +6,6 @@ let tokenizedData = [];
 let tokenDictionary = new Map(); // original -> token
 let reverseDictionary = new Map(); // token -> original
 let currentDictionary = new Map(); // для детокенизации
-let selectedColumns = new Set(); // выбранные столбцы для токенизации
-let syncScrollEnabled = true;
-
-// Очистка всего состояния
-function clearAll() {
-    workbook = null;
-    currentSheet = null;
-    originalData = [];
-    tokenizedData = [];
-    tokenDictionary.clear();
-    reverseDictionary.clear();
-    currentDictionary.clear();
-    selectedColumns.clear();
-    
-    // Сбросить UI
-    document.getElementById('fileInput').value = '';
-    document.getElementById('sheetSelectionContainer').style.display = 'none';
-    document.getElementById('tablesSection').style.display = 'none';
-    document.getElementById('exportSection').style.display = 'none';
-    document.getElementById('originalTable').innerHTML = '';
-    document.getElementById('tokenizedTable').innerHTML = '';
-    document.getElementById('responseTextarea').value = '';
-    document.getElementById('tokensList').innerHTML = '';
-    document.getElementById('detokenizedText').innerHTML = '';
-    document.getElementById('statistics').style.display = 'none';
-    document.getElementById('jsonInput').value = '';
-}
 
 // Загрузка файла
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -47,8 +20,6 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
         // Показать выбор листа
         const sheetNames = workbook.SheetNames;
         const sheetSelect = document.getElementById('sheetSelect');
-        const sheetContainer = document.getElementById('sheetSelectionContainer');
-        
         sheetSelect.innerHTML = '';
         
         if (sheetNames.length > 1) {
@@ -58,11 +29,10 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
                 option.textContent = name;
                 sheetSelect.appendChild(option);
             });
-            sheetContainer.style.display = 'flex';
-            sheetSelect.onchange = loadSheet;
-            loadSheetByIndex(0);
+            document.getElementById('sheetSelection').style.display = 'block';
+            sheetSelect.addEventListener('change', loadSheet);
         } else {
-            sheetContainer.style.display = 'none';
+            document.getElementById('sheetSelection').style.display = 'none';
             loadSheetByIndex(0);
         }
     };
@@ -78,50 +48,24 @@ function loadSheet(e) {
 function loadSheetByIndex(index) {
     currentSheet = workbook.Sheets[workbook.SheetNames[index]];
     originalData = XLSX.utils.sheet_to_json(currentSheet, {header: 1, defval: ''});
-    selectedColumns.clear();
     
     displayOriginalTable();
-    document.getElementById('tablesSection').style.display = 'block';
+    showColumnSelection();
 }
 
-// Отображение исходной таблицы с чекбоксами в заголовках
+// Отображение исходной таблицы
 function displayOriginalTable() {
     const table = document.getElementById('originalTable');
     table.innerHTML = '';
     
     if (originalData.length === 0) return;
     
-    const maxCols = Math.max(...originalData.map(row => row.length));
-    
-    // Создать заголовки с чекбоксами
+    // Создать заголовки
     const headerRow = document.createElement('tr');
+    const maxCols = Math.max(...originalData.map(row => row.length));
     for (let i = 0; i < maxCols; i++) {
         const th = document.createElement('th');
-        th.className = selectedColumns.has(i) ? 'column-selected' : '';
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = selectedColumns.has(i);
-        checkbox.addEventListener('change', function() {
-            if (this.checked) {
-                selectedColumns.add(i);
-            } else {
-                selectedColumns.delete(i);
-            }
-            updateColumnHighlighting();
-        });
-        
-        const label = document.createElement('label');
-        label.textContent = `Столбец ${i + 1}`;
-        label.style.cursor = 'pointer';
-        label.addEventListener('click', function(e) {
-            if (e.target !== checkbox) {
-                checkbox.click();
-            }
-        });
-        
-        th.appendChild(checkbox);
-        th.appendChild(label);
+        th.textContent = `Столбец ${i + 1}`;
         headerRow.appendChild(th);
     }
     table.appendChild(headerRow);
@@ -132,49 +76,67 @@ function displayOriginalTable() {
         for (let i = 0; i < maxCols; i++) {
             const td = document.createElement('td');
             td.textContent = row[i] || '';
-            td.className = selectedColumns.has(i) ? 'column-selected' : '';
             tr.appendChild(td);
         }
         table.appendChild(tr);
     });
+    
+    document.getElementById('originalTableSection').style.display = 'block';
 }
 
-// Обновление подсветки столбцов
-function updateColumnHighlighting() {
-    const table = document.getElementById('originalTable');
+// Показать выбор столбцов
+function showColumnSelection() {
+    if (originalData.length === 0) return;
+    
     const maxCols = Math.max(...originalData.map(row => row.length));
+    const container = document.getElementById('columnCheckboxes');
+    container.innerHTML = '';
     
-    // Обновить заголовки
-    const headerRow = table.querySelector('tr');
-    const headers = headerRow.querySelectorAll('th');
-    headers.forEach((th, i) => {
-        if (selectedColumns.has(i)) {
-            th.className = 'column-selected';
-            th.querySelector('input[type="checkbox"]').checked = true;
-        } else {
-            th.className = '';
-            th.querySelector('input[type="checkbox"]').checked = false;
-        }
-    });
+    for (let i = 0; i < maxCols; i++) {
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = i;
+        
+        const span = document.createElement('span');
+        span.textContent = `Столбец ${i + 1}`;
+        
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        container.appendChild(label);
+    }
     
-    // Обновить ячейки
-    const rows = table.querySelectorAll('tr');
-    rows.forEach((row, rowIndex) => {
-        if (rowIndex === 0) return; // пропустить заголовок
-        const cells = row.querySelectorAll('td');
-        cells.forEach((td, i) => {
-            if (selectedColumns.has(i)) {
-                td.className = 'column-selected';
-            } else {
-                td.className = '';
-            }
-        });
+    document.getElementById('columnSelection').style.display = 'block';
+}
+
+// Генерация base64url токена
+function generateToken() {
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    
+    // Конвертировать в base64
+    let binary = '';
+    array.forEach(byte => {
+        binary += String.fromCharCode(byte);
     });
+    let base64 = btoa(binary);
+    
+    // Конвертировать base64 в base64url
+    base64 = base64.replace(/\+/g, '-');
+    base64 = base64.replace(/\//g, '_');
+    base64 = base64.replace(/=/g, ''); // Убрать padding
+    
+    return `[[${base64}]]`;
 }
 
 // Токенизация столбцов
 function tokenizeColumns() {
-    if (selectedColumns.size === 0) {
+    const checkboxes = document.querySelectorAll('#columnCheckboxes input[type="checkbox"]:checked');
+    const selectedColumns = Array.from(checkboxes).map(cb => parseInt(cb.value));
+    
+    if (selectedColumns.length === 0) {
         alert('Выберите хотя бы один столбец для токенизации');
         return;
     }
@@ -213,25 +175,23 @@ function tokenizeColumns() {
     
     displayTokenizedTable();
     
-    // Показать секцию экспорта
-    document.getElementById('exportSection').style.display = 'block';
+    // Показать секцию результатов
+    document.getElementById('tokenizedTableSection').style.display = 'block';
 }
 
-// Отображение токенизированной таблицы с подсветкой
+// Отображение токенизированной таблицы
 function displayTokenizedTable() {
     const table = document.getElementById('tokenizedTable');
     table.innerHTML = '';
     
     if (tokenizedData.length === 0) return;
     
-    const maxCols = Math.max(...tokenizedData.map(row => row.length));
-    
     // Создать заголовки
     const headerRow = document.createElement('tr');
+    const maxCols = Math.max(...tokenizedData.map(row => row.length));
     for (let i = 0; i < maxCols; i++) {
         const th = document.createElement('th');
         th.textContent = `Столбец ${i + 1}`;
-        th.className = selectedColumns.has(i) ? 'column-selected' : '';
         headerRow.appendChild(th);
     }
     table.appendChild(headerRow);
@@ -242,64 +202,10 @@ function displayTokenizedTable() {
         for (let i = 0; i < maxCols; i++) {
             const td = document.createElement('td');
             td.textContent = row[i] || '';
-            td.className = selectedColumns.has(i) ? 'column-selected' : '';
             tr.appendChild(td);
         }
         table.appendChild(tr);
     });
-    
-    // Настроить синхронную прокрутку
-    setupSyncScroll();
-}
-
-// Настройка синхронной прокрутки
-function setupSyncScroll() {
-    const originalContainer = document.getElementById('originalTableContainer');
-    const tokenizedContainer = document.getElementById('tokenizedTableContainer');
-    
-    // Удалить старые обработчики
-    originalContainer.onscroll = null;
-    tokenizedContainer.onscroll = null;
-    
-    // Синхронизация: оригинал -> токенизированная
-    originalContainer.onscroll = function() {
-        if (syncScrollEnabled) {
-            syncScrollEnabled = false;
-            tokenizedContainer.scrollTop = originalContainer.scrollTop;
-            tokenizedContainer.scrollLeft = originalContainer.scrollLeft;
-            setTimeout(() => { syncScrollEnabled = true; }, 10);
-        }
-    };
-    
-    // Синхронизация: токенизированная -> оригинал
-    tokenizedContainer.onscroll = function() {
-        if (syncScrollEnabled) {
-            syncScrollEnabled = false;
-            originalContainer.scrollTop = tokenizedContainer.scrollTop;
-            originalContainer.scrollLeft = tokenizedContainer.scrollLeft;
-            setTimeout(() => { syncScrollEnabled = true; }, 10);
-        }
-    };
-}
-
-// Генерация base64url токена
-function generateToken() {
-    const array = new Uint8Array(16);
-    crypto.getRandomValues(array);
-    
-    // Конвертировать в base64
-    let binary = '';
-    array.forEach(byte => {
-        binary += String.fromCharCode(byte);
-    });
-    let base64 = btoa(binary);
-    
-    // Конвертировать base64 в base64url
-    base64 = base64.replace(/\+/g, '-');
-    base64 = base64.replace(/\//g, '_');
-    base64 = base64.replace(/=/g, ''); // Убрать padding
-    
-    return `[[${base64}]]`;
 }
 
 // Скачать CSV
@@ -328,23 +234,6 @@ function downloadCSV() {
     URL.revokeObjectURL(url);
 }
 
-// Скачать XLSX
-function downloadXLSX() {
-    if (tokenizedData.length === 0) return;
-    
-    // Создать новый workbook
-    const wb = XLSX.utils.book_new();
-    
-    // Конвертировать данные в worksheet
-    const ws = XLSX.utils.aoa_to_sheet(tokenizedData);
-    
-    // Добавить worksheet в workbook
-    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-    
-    // Скачать
-    XLSX.writeFile(wb, 'tokenized.xlsx');
-}
-
 // Скачать JSON-словарь
 function downloadJSON() {
     const dict = {};
@@ -360,32 +249,6 @@ function downloadJSON() {
     a.download = 'dictionary.json';
     a.click();
     URL.revokeObjectURL(url);
-}
-
-// Промпт-подсказка
-function togglePromptHint(button) {
-    const content = document.getElementById('promptHintContent');
-    
-    if (content.style.display === 'none') {
-        content.style.display = 'block';
-        button.textContent = '▼ Промпт для нейросети';
-    } else {
-        content.style.display = 'none';
-        button.textContent = '▶ Промпт для нейросети';
-    }
-}
-
-function copyPromptHint(button) {
-    const text = document.getElementById('promptText').value;
-    navigator.clipboard.writeText(text).then(() => {
-        const originalText = button.textContent;
-        button.textContent = 'Скопировано!';
-        setTimeout(() => {
-            button.textContent = originalText;
-        }, 2000);
-    }).catch(err => {
-        alert('Не удалось скопировать текст');
-    });
 }
 
 // Импорт JSON-словаря
@@ -421,53 +284,23 @@ function processDetokenization() {
     const text = document.getElementById('responseTextarea').value;
     const tokensListContainer = document.getElementById('tokensList');
     const detokenizedTextContainer = document.getElementById('detokenizedText');
-    const statisticsContainer = document.getElementById('statistics');
     
     // Найти все токены вида [[...]]
     const tokenRegex = /\[\[([^\]]+)\]\]/g;
     const foundTokens = new Map(); // token -> count
-    const tokenPositions = []; // для подсветки в textarea
     
     let match;
-    const textCopy = text; // копия для поиска позиций
-    while ((match = tokenRegex.exec(textCopy)) !== null) {
+    while ((match = tokenRegex.exec(text)) !== null) {
         const token = match[0]; // Полный токен с [[ и ]]
         foundTokens.set(token, (foundTokens.get(token) || 0) + 1);
-        tokenPositions.push({
-            token: token,
-            index: match.index,
-            length: match[0].length
-        });
     }
-    
-    // Статистика
-    let foundCount = 0;
-    let notFoundCount = 0;
-    foundTokens.forEach((count, token) => {
-        if (currentDictionary.has(token)) {
-            foundCount++;
-        } else {
-            notFoundCount++;
-        }
-    });
-    
-    const totalOccurrences = Array.from(foundTokens.values()).reduce((a, b) => a + b, 0);
-    
-    // Обновить статистику
-    document.getElementById('textLength').textContent = text.length;
-    document.getElementById('totalTokens').textContent = totalOccurrences;
-    document.getElementById('uniqueTokens').textContent = foundTokens.size;
-    document.getElementById('foundTokens').textContent = foundCount;
-    document.getElementById('notFoundTokens').textContent = notFoundCount;
-    statisticsContainer.style.display = 'flex';
     
     // Отобразить список токенов
     tokensListContainer.innerHTML = '';
     
     if (foundTokens.size === 0) {
         tokensListContainer.innerHTML = '<p style="color: #666; font-size: 12px;">Токены не найдены</p>';
-        detokenizedTextContainer.innerHTML = '';
-        statisticsContainer.style.display = 'none';
+        detokenizedTextContainer.textContent = text;
         return;
     }
     
@@ -488,7 +321,7 @@ function processDetokenization() {
         countSpan.textContent = `×${count}`;
         
         const statusSpan = document.createElement('span');
-        statusSpan.className = `token-status ${isFound ? 'found' : 'not-found'}`;
+        statusSpan.style.fontSize = '11px';
         statusSpan.textContent = isFound ? 'found' : 'not found';
         
         info.appendChild(tokenSpan);
@@ -499,59 +332,37 @@ function processDetokenization() {
         tokensListContainer.appendChild(item);
     });
     
-    // Детокенизировать текст с подсветкой замен
-    let detokenizedHTML = '';
-    let lastIndex = 0;
-    
-    // Отсортировать позиции по индексу
-    tokenPositions.sort((a, b) => a.index - b.index);
-    
-    tokenPositions.forEach(pos => {
-        // Добавить текст до токена
-        if (pos.index > lastIndex) {
-            const beforeText = escapeHtml(text.substring(lastIndex, pos.index));
-            detokenizedHTML += beforeText;
-        }
-        
-        // Заменить токен
-        if (currentDictionary.has(pos.token)) {
-            const original = currentDictionary.get(pos.token);
-            const escapedOriginal = escapeHtml(original);
-            detokenizedHTML += `<span class="token-replaced">${escapedOriginal}</span>`;
-        } else {
-            // Токен не найден - оставить как есть
-            const escapedToken = escapeHtml(pos.token);
-            detokenizedHTML += escapedToken;
-        }
-        
-        lastIndex = pos.index + pos.length;
+    // Детокенизировать текст
+    let detokenizedText = text;
+    currentDictionary.forEach((original, token) => {
+        // Заменять только токены, которые есть в словаре
+        const regex = new RegExp(escapeRegExp(token), 'g');
+        detokenizedText = detokenizedText.replace(regex, original);
     });
     
-    // Добавить оставшийся текст
-    if (lastIndex < text.length) {
-        const remainingText = escapeHtml(text.substring(lastIndex));
-        detokenizedHTML += remainingText;
-    }
-    
-    if (detokenizedHTML === '') {
-        detokenizedHTML = escapeHtml(text);
-    }
-    
-    detokenizedTextContainer.innerHTML = detokenizedHTML;
+    detokenizedTextContainer.textContent = detokenizedText;
 }
 
-// Экранирование HTML
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+// Экранирование спецсимволов для regex
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Копирование детокенизированного текста
-function copyDetokenizedText(button) {
-    const container = document.getElementById('detokenizedText');
-    const text = container.textContent || container.innerText;
+// Промпт-подсказка
+function togglePromptHint(button) {
+    const content = document.getElementById('promptHintContent');
     
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        button.textContent = '▼ Промпт-подсказка';
+    } else {
+        content.style.display = 'none';
+        button.textContent = '▶ Промпт-подсказка';
+    }
+}
+
+function copyPromptHint(button) {
+    const text = 'Значения вида [[...]] нельзя менять';
     navigator.clipboard.writeText(text).then(() => {
         const originalText = button.textContent;
         button.textContent = 'Скопировано!';
@@ -562,3 +373,4 @@ function copyDetokenizedText(button) {
         alert('Не удалось скопировать текст');
     });
 }
+
