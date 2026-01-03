@@ -20,33 +20,30 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
         const data = new Uint8Array(e.target.result);
         workbook = XLSX.read(data, {type: 'array'});
         
-        // Показать выбор листа
+        // Показать выбор листа (всегда)
         const sheetNames = workbook.SheetNames;
         const sheetSelect = document.getElementById('sheetSelect');
         const sheetSelectionWrapper = document.getElementById('sheetSelectionWrapper');
         sheetSelect.innerHTML = '';
         
-        if (sheetNames.length > 1) {
-            sheetNames.forEach((name, index) => {
-                const option = document.createElement('option');
-                option.value = index;
-                option.textContent = name;
-                sheetSelect.appendChild(option);
-            });
-            sheetSelectionWrapper.style.display = 'flex';
-            sheetSelect.onchange = function() {
-                // При смене листа сбрасываем состояние, но не строим таблицу
-                selectedColumns.clear();
-                tokenizedColumns.clear();
-                tableData = [];
-                hasTokenizedData = false;
-                document.getElementById('tableSection').style.display = 'none';
-                document.getElementById('viewModeWrapper').style.display = 'none';
-                document.getElementById('downloadSection').style.display = 'none';
-            };
-        } else {
-            sheetSelectionWrapper.style.display = 'none';
-        }
+        // Всегда показываем select, даже если лист один
+        sheetNames.forEach((name, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = name;
+            sheetSelect.appendChild(option);
+        });
+        sheetSelectionWrapper.style.display = 'flex';
+        sheetSelect.onchange = function() {
+            // При смене листа сбрасываем состояние, но не строим таблицу
+            selectedColumns.clear();
+            tokenizedColumns.clear();
+            tableData = [];
+            hasTokenizedData = false;
+            document.getElementById('tableSection').style.display = 'none';
+            document.getElementById('viewModeWrapper').style.display = 'none';
+            document.getElementById('downloadSection').style.display = 'none';
+        };
         
         document.getElementById('clearButton').style.display = 'inline-block';
         document.getElementById('recognizeButton').style.display = 'inline-block';
@@ -113,7 +110,9 @@ function clearAll() {
     
     // Очистить UI
     document.getElementById('fileInput').value = '';
-    document.getElementById('sheetSelectionWrapper').style.display = 'none';
+    const sheetSelect = document.getElementById('sheetSelect');
+    sheetSelect.innerHTML = '';
+    document.getElementById('sheetSelectionWrapper').style.display = 'flex';
     document.getElementById('clearButton').style.display = 'none';
     document.getElementById('recognizeButton').style.display = 'none';
     document.getElementById('tableSection').style.display = 'none';
@@ -164,8 +163,8 @@ function displayTable() {
         
         th.appendChild(checkbox);
         
-        const label = document.createTextNode(` Столбец ${i + 1}`);
-        th.appendChild(label);
+        const labelText = document.createTextNode(` Столбец ${i + 1}`);
+        th.appendChild(labelText);
         headerRow.appendChild(th);
     }
     table.appendChild(headerRow);
@@ -406,16 +405,16 @@ function togglePromptSection(button) {
     
     if (section.style.display === 'none') {
         section.style.display = 'block';
-        button.textContent = '▼ Промпт для нейросети';
+        button.textContent = '▼';
     } else {
         section.style.display = 'none';
-        button.textContent = '▶ Промпт для нейросети';
+        button.textContent = '▶';
     }
 }
 
 function copyPromptText(button) {
-    const textarea = document.getElementById('promptTextarea');
-    const text = textarea.value;
+    const promptElement = document.getElementById('promptTextarea');
+    const text = promptElement.textContent || promptElement.innerText;
     
     navigator.clipboard.writeText(text).then(() => {
         const originalText = button.textContent;
@@ -496,7 +495,7 @@ function processDetokenization() {
     statsSummary.innerHTML = `
         <div>Длина текста: ${text.length} символов</div>
         <div>Найдено токенов: ${totalTokens} (уникальных: ${uniqueTokens})</div>
-        <div>Found: ${foundCount} | Not found: ${notFoundCount}</div>
+        <div>Распознано: ${foundCount} | Не распознано: ${notFoundCount}</div>
     `;
     
     // Отобразить список токенов
@@ -519,6 +518,17 @@ function processDetokenization() {
         const tokenSpan = document.createElement('span');
         tokenSpan.textContent = token;
         tokenSpan.style.fontWeight = 'bold';
+        tokenSpan.className = 'token-value';
+        
+        // Добавляем tooltip
+        if (isFound) {
+            const originalValue = currentDictionary.get(token);
+            tokenSpan.title = originalValue;
+            tokenSpan.className += ' token-with-tooltip';
+        } else {
+            tokenSpan.title = 'Не найдено в словаре';
+            tokenSpan.className += ' token-not-found';
+        }
         
         const countSpan = document.createElement('span');
         countSpan.className = 'token-count';
@@ -526,7 +536,7 @@ function processDetokenization() {
         
         const statusSpan = document.createElement('span');
         statusSpan.className = `token-status ${isFound ? 'found' : 'not-found'}`;
-        statusSpan.textContent = isFound ? 'found' : 'not found';
+        statusSpan.textContent = isFound ? 'Найдено в словаре' : 'Не найдено в словаре';
         
         info.appendChild(tokenSpan);
         info.appendChild(countSpan);

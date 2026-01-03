@@ -18,15 +18,15 @@
                     <label for="fileInput">Выбор файла XLSX:</label>
                     <input type="file" id="fileInput" accept=".xlsx,.xls" />
                 </div>
-                <div class="file-control-item" id="sheetSelectionWrapper" style="display: none;">
-                    <label for="sheetSelect">Выбор листа:</label>
+                <div class="file-control-item" id="sheetSelectionWrapper">
+                    <label for="sheetSelect">Лист:</label>
                     <select id="sheetSelect"></select>
                 </div>
                 <div class="file-control-item">
-                    <button id="clearButton" onclick="clearAll()" style="display: none;">Очистить</button>
-                </div>
-                <div class="file-control-item">
                     <button id="recognizeButton" onclick="recognizeData()" style="display: none;">Распознать данные</button>
+                </div>
+                <div class="file-control-item file-control-item-clear">
+                    <button id="clearButton" onclick="clearAll()" style="display: none;">Очистить</button>
                 </div>
             </div>
         </div>
@@ -34,8 +34,9 @@
         <!-- Таблица -->
         <div class="section" id="tableSection" style="display: none;">
             <h2>Таблица</h2>
-            <div style="margin-bottom: 15px;">
-                <div id="viewModeWrapper" style="display: none; margin-bottom: 10px;">
+            <div class="table-controls-row">
+                <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
+                <div id="viewModeWrapper" style="display: none;" class="view-mode-wrapper">
                     <label for="viewModeSelect">Режим отображения:</label>
                     <select id="viewModeSelect" onchange="updateTableView()">
                         <option value="tokenized">Показать токенизированные</option>
@@ -43,7 +44,6 @@
                         <option value="both">Показать оба</option>
                     </select>
                 </div>
-                <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
             </div>
             <div class="table-container" id="tableContainer">
                 <table id="dataTable"></table>
@@ -52,21 +52,28 @@
             <div class="download-section" id="downloadSection" style="display: none; margin-top: 20px;">
                 <h3>Экспорт</h3>
                 <div class="download-buttons">
-                    <button onclick="downloadCSV()">Скачать CSV</button>
-                    <button onclick="downloadXLSX()">Скачать XLSX</button>
-                    <button onclick="downloadJSON()">Скачать JSON-словарь</button>
-                    <button class="prompt-toggle-button" onclick="togglePromptSection(this)">▶ Промпт для нейросети</button>
+                    <button class="download-button-data" onclick="downloadCSV()">Скачать CSV</button>
+                    <button class="download-button-data" onclick="downloadXLSX()">Скачать XLSX</button>
+                    <button class="download-button-dict" onclick="downloadJSON()">Скачать JSON-словарь</button>
                 </div>
-                <div class="prompt-section" id="promptSection" style="display: none;">
-                    <textarea id="promptTextarea" readonly>В тексте ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
+                <div class="prompt-subsection">
+                    <div class="prompt-subsection-header">
+                        <h4>Промпт для нейросети</h4>
+                        <button class="prompt-toggle-button" onclick="togglePromptSection(this)">▶</button>
+                    </div>
+                    <div class="prompt-section" id="promptSection" style="display: none;">
+                        <div class="prompt-card">
+                            <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
+                            <div class="prompt-text" id="promptTextarea">В тексте ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
 Жёсткое правило: не изменяй токены [[...]] ни при каких условиях.
 (1) Не меняй внутри токена ни одного символа: буквы/цифры/знаки, регистр, длину.
 (2) Не добавляй и не удаляй пробелы, переносы строк, кавычки или любые символы внутри токена.
 (3) Не разбивай токен на части и не объединяй токены между собой.
 (4) Не пытайся "расшифровать" токены, не придумывай исходные значения.
 (5) Если нужно сослаться на значение — используй токен ровно как он дан, целиком, включая [[ и ]].
-Если токен встречается несколько раз — считай, что это одно и то же значение.</textarea>
-                    <button class="copy-button" onclick="copyPromptText(this)">Копировать</button>
+Если токен встречается несколько раз — считай, что это одно и то же значение.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -75,30 +82,35 @@
         <div class="section" id="detokenizationSection">
             <h2>Детокенизация</h2>
             
-            <div class="detokenization-controls">
-                <div class="control-group">
-                    <label for="jsonInput">Импорт JSON-словаря:</label>
-                    <input type="file" id="jsonInput" accept=".json" />
-                </div>
-            </div>
-
             <div class="detokenization-layout">
-                <div class="text-area-container">
+                <div class="detokenization-left">
                     <label for="responseTextarea">Ответ нейросети (сырой):</label>
                     <textarea id="responseTextarea" placeholder="Вставьте текст с токенами [[...]]"></textarea>
-                    <div class="stats-summary" id="statsSummary"></div>
                 </div>
                 
-                <div class="tokens-list-container">
+                <div class="detokenization-center">
+                    <div class="detokenization-stats">
+                        <h4>Статистика</h4>
+                        <div class="stats-summary" id="statsSummary"></div>
+                        <div class="json-import-control">
+                            <label for="jsonInput">Импорт JSON-словаря:</label>
+                            <input type="file" id="jsonInput" accept=".json" />
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="detokenization-right">
                     <h3>Найденные токены</h3>
-                    <div id="tokensList"></div>
+                    <div class="tokens-list-container">
+                        <div id="tokensList"></div>
+                    </div>
                 </div>
             </div>
 
             <div class="detokenized-result">
                 <div class="result-header">
                     <h3>Ответ (детокенизированный)</h3>
-                    <button class="copy-button" onclick="copyDetokenizedText(this)">Копировать</button>
+                    <button class="copy-button copy-button-result" onclick="copyDetokenizedText(this)">Копировать</button>
                 </div>
                 <div id="detokenizedText" class="result-text"></div>
             </div>
