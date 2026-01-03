@@ -35,18 +35,38 @@
         <div class="section" id="tableSection" style="display: none;">
             <h2>Таблица</h2>
             <div class="table-controls-row">
-                <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
-                <div id="viewModeWrapper" style="display: none;" class="view-mode-wrapper">
-                    <label for="viewModeSelect">Режим отображения:</label>
-                    <select id="viewModeSelect" onchange="updateTableView()">
-                        <option value="tokenized">Показать токенизированные</option>
-                        <option value="original">Показать исходные</option>
-                        <option value="both">Показать оба</option>
-                    </select>
+                <div class="table-controls-left">
+                    <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
+                </div>
+                <div class="table-controls-right">
+                    <div id="fontSizeWrapper" style="display: none;" class="view-mode-wrapper">
+                        <label for="fontSizeSelect">Размер текста в таблице:</label>
+                        <select id="fontSizeSelect" onchange="updateTableFontSize()">
+                            <option value="10px">10px</option>
+                            <option value="12px" selected>12px</option>
+                            <option value="14px">14px</option>
+                            <option value="16px">16px</option>
+                            <option value="18px">18px</option>
+                        </select>
+                    </div>
+                    <div id="viewModeWrapper" style="display: none;" class="view-mode-wrapper">
+                        <label for="viewModeSelect">Режим отображения:</label>
+                        <select id="viewModeSelect" onchange="updateTableView()">
+                            <option value="tokenized">Показать токенизированные</option>
+                            <option value="original">Показать исходные</option>
+                            <option value="both">Показать оба</option>
+                        </select>
+                    </div>
                 </div>
             </div>
-            <div class="table-container" id="tableContainer">
-                <table id="dataTable"></table>
+            <div class="table-wrapper">
+                <div class="table-scroll-top" id="tableScrollTop"></div>
+                <div class="table-container-wrapper">
+                    <div class="table-anchor-gutter" id="tableAnchorGutter"></div>
+                    <div class="table-container" id="tableContainer">
+                        <table id="dataTable"></table>
+                    </div>
+                </div>
             </div>
             
             <div class="download-section" id="downloadSection" style="display: none; margin-top: 20px;">
@@ -59,19 +79,24 @@
                 <div class="prompt-subsection">
                     <div class="prompt-subsection-header">
                         <h4>Промпт для нейросети</h4>
-                        <button class="prompt-toggle-button" onclick="togglePromptSection(this)">▶</button>
+                        <div class="prompt-header-buttons">
+                            <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
+                            <button class="prompt-toggle-button" onclick="togglePromptSection(this)">▶</button>
+                        </div>
                     </div>
                     <div class="prompt-section" id="promptSection" style="display: none;">
                         <div class="prompt-card">
-                            <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
-                            <div class="prompt-text" id="promptTextarea">В тексте ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
+                            <div class="prompt-text" id="promptTextarea">В таблице ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
 Жёсткое правило: не изменяй токены [[...]] ни при каких условиях.
-(1) Не меняй внутри токена ни одного символа: буквы/цифры/знаки, регистр, длину.
-(2) Не добавляй и не удаляй пробелы, переносы строк, кавычки или любые символы внутри токена.
-(3) Не разбивай токен на части и не объединяй токены между собой.
-(4) Не пытайся "расшифровать" токены, не придумывай исходные значения.
-(5) Если нужно сослаться на значение — используй токен ровно как он дан, целиком, включая [[ и ]].
-Если токен встречается несколько раз — считай, что это одно и то же значение.</div>
+
+(1) Токен — это подстрока от [[ до ]] целиком. Запрещено разрывать токен переносом строки или вставлять внутрь токена пробелы/переносы.
+(2) Не меняй внутри токена ни одного символа: буквы/цифры/знаки, регистр, длину.
+(3) Не добавляй и не удаляй символы внутри токена. Не разбивай токен на части и не объединяй токены между собой.
+(4) Не пытайся расшифровать токены и не придумывай исходные значения.
+(5) Запрещено создавать новые токены вида [[...]]. Используй только те токены, которые даны во входных данных.
+(6) Если нужно сослаться на значение — используй токен ровно как он дан, целиком, включая [[ и ]]. Если токен встречается несколько раз — считай, что это одно и то же значение.
+(7) Если в ответе используются токены — выводи ответ простым текстом (без Markdown-таблиц, код-блоков и ссылок), чтобы не исказить токены.
+(8) Перед отправкой ответа проверь, что каждый токен в твоём ответе совпадает с токеном из входных данных символ-в-символ.</div>
                         </div>
                     </div>
                 </div>
@@ -82,6 +107,16 @@
         <div class="section" id="detokenizationSection">
             <h2>Детокенизация</h2>
             
+            <div class="json-import-section">
+                <hr class="section-divider">
+                <div class="json-import-control-top">
+                    <label for="jsonInput">Импорт JSON-словаря:</label>
+                    <input type="file" id="jsonInput" accept=".json" />
+                    <span id="jsonFileName" class="json-file-name"></span>
+                </div>
+                <hr class="section-divider">
+            </div>
+            
             <div class="detokenization-layout">
                 <div class="detokenization-left">
                     <label for="responseTextarea">Ответ нейросети (сырой):</label>
@@ -89,18 +124,14 @@
                 </div>
                 
                 <div class="detokenization-center">
+                    <h4>Статистика</h4>
                     <div class="detokenization-stats">
-                        <h4>Статистика</h4>
                         <div class="stats-summary" id="statsSummary"></div>
-                        <div class="json-import-control">
-                            <label for="jsonInput">Импорт JSON-словаря:</label>
-                            <input type="file" id="jsonInput" accept=".json" />
-                        </div>
                     </div>
                 </div>
                 
                 <div class="detokenization-right">
-                    <h3>Найденные токены</h3>
+                    <h4>Найденные токены</h4>
                     <div class="tokens-list-container">
                         <div id="tokensList"></div>
                     </div>
@@ -113,6 +144,22 @@
                     <button class="copy-button copy-button-result" onclick="copyDetokenizedText(this)">Копировать</button>
                 </div>
                 <div id="detokenizedText" class="result-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно подтверждения очистки -->
+    <div class="modal-overlay" id="clearModal">
+        <div class="modal-dialog">
+            <h3>Подтвердите действие</h3>
+            <div id="clearModalWarning" class="warning" style="display: none;">
+                <strong>Внимание!</strong> Вы экспортировали таблицу, но не экспортировали JSON-словарь. 
+                Без словаря детокенизация будет невозможна. Убедитесь, что вы сохранили словарь перед очисткой.
+            </div>
+            <p id="clearModalMessage">Вы уверены, что хотите очистить все данные?</p>
+            <div class="modal-buttons">
+                <button class="modal-button modal-button-cancel" onclick="closeClearModal()">Отмена</button>
+                <button class="modal-button modal-button-confirm" onclick="confirmClear()">Очистить</button>
             </div>
         </div>
     </div>
