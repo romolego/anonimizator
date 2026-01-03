@@ -155,6 +155,16 @@ h3 {
     box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
 }
 
+.anchor-dot.drag-hidden {
+    opacity: 0;
+}
+
+.anchor-dot.drag-ghost {
+    background-color: #007bff;
+    border-color: #0056b3;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+}
+
 .anchor-dot.active {
     background-color: #007bff;
     border-color: #007bff;

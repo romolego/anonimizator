@@ -16,9 +16,7 @@ let isMarkerEnabled = true; // Включен ли маркер исключен
 let currentExportId = null; // ID для текущей сессии экспорта
 let tableExported = false; // Флаг экспорта таблицы
 let dictionaryExported = false; // Флаг экспорта словаря
-let anchorControlPanel = null; // Панель управления маркером
-let markerOutsideClickHandler = null;
-let markerEscapeHandler = null;
+let markerGhostElement = null;
 let isMarkerDragging = false;
 let markerDragActivated = false;
 let markerDragCandidateRow = 1;
@@ -233,8 +231,7 @@ function performClear() {
     currentExportId = null;
     tableExported = false;
     dictionaryExported = false;
-    hideAnchorControlPanel();
-    anchorControlPanel = null;
+    clearMarkerGhost();
     updateViewModeAvailability();
     
     // Очистить UI
@@ -283,6 +280,7 @@ function displayTable() {
     }, 100);
     
     const maxCols = tableData[0].length;
+    const showTokensView = viewMode === 'tokenized' || viewMode === 'both';
     
     // Создать заголовки с чекбоксами
     const thead = document.createElement('thead');
@@ -291,7 +289,7 @@ function displayTable() {
         const th = document.createElement('th');
         
         // Определить класс цвета столбца
-        if (tokenizedColumns.has(i)) {
+        if (tokenizedColumns.has(i) && showTokensView) {
             th.className = 'column-tokenized';
         } else if (selectedColumns.has(i)) {
             th.className = 'column-selected';
@@ -327,16 +325,17 @@ function displayTable() {
             
             // Определить класс цвета столбца
             let cellClasses = [];
-            if (!isExcludedRow) {
-                if (tokenizedColumns.has(i)) {
-                    cellClasses.push('column-tokenized');
-                } else if (selectedColumns.has(i)) {
-                    cellClasses.push('column-selected');
-                }
+            const showTokenColor = showTokensView && !isExcludedRow;
+            const showSelectedColor = !isExcludedRow;
+
+            if (showTokenColor && tokenizedColumns.has(i)) {
+                cellClasses.push('column-tokenized');
+            } else if (showSelectedColor && selectedColumns.has(i)) {
+                cellClasses.push('column-selected');
             }
             
             // Отобразить значение в зависимости от режима просмотра
-            if (isExcludedRow || !cellInfo.isTokenized || !hasTokenizedData) {
+            if (isExcludedRow || !cellInfo.isTokenized || !hasTokenizedData || (!showTokensView)) {
                 // Нетокенизированная ячейка или нет токенизированных данных
                 td.textContent = cellInfo.original;
                 td.title = '';
@@ -458,14 +457,13 @@ function setupTokenizationAnchor() {
     const tableContainer = document.getElementById('tableContainer');
     
     if (!gutter || !table || tableData.length === 0) {
-        hideAnchorControlPanel();
+        clearMarkerGhost();
         return;
     }
     
     const dataRows = table.querySelectorAll('tbody tr');
     if (dataRows.length === 0) return;
     
-    const panelWasOpen = anchorControlPanel && anchorControlPanel.style.display === 'flex';
     const headerHeight = table.querySelector('thead')?.offsetHeight || 0;
     gutter.innerHTML = '';
     gutter.style.paddingTop = headerHeight + 'px';
@@ -499,42 +497,6 @@ function setupTokenizationAnchor() {
     
     gutter.appendChild(rowsWrapper);
     
-    if (!anchorControlPanel) {
-        anchorControlPanel = document.createElement('div');
-        anchorControlPanel.className = 'anchor-control-panel';
-        anchorControlPanel.innerHTML = `
-            <button class="anchor-toggle-btn"></button>
-            <button class="anchor-move-up-btn">Переместить вверх</button>
-            <button class="anchor-move-down-btn">Переместить вниз</button>
-        `;
-
-        const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
-        const moveUpBtn = anchorControlPanel.querySelector('.anchor-move-up-btn');
-        const moveDownBtn = anchorControlPanel.querySelector('.anchor-move-down-btn');
-
-        if (toggleBtn) {
-            toggleBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                toggleMarkerEnabled();
-            });
-        }
-        if (moveUpBtn) {
-            moveUpBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                moveMarkerUp();
-            });
-        }
-        if (moveDownBtn) {
-            moveDownBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                moveMarkerDown();
-            });
-        }
-    }
-    
-    anchorControlPanel.style.display = 'none';
-    gutter.appendChild(anchorControlPanel);
-    
     // Синхронизация скролла gutter с таблицей
     tableContainer.onscroll = function() {
         gutter.scrollTop = tableContainer.scrollTop;
@@ -546,105 +508,16 @@ function setupTokenizationAnchor() {
     
     gutter.scrollTop = tableContainer.scrollTop;
 
-    if (panelWasOpen && markerRowElement) {
-        showAnchorControlPanel(markerRowElement);
-    } else if (!markerRowElement) {
-        hideAnchorControlPanel();
+    if (!markerRowElement) {
+        clearMarkerGhost();
     }
 }
 
-function hideAnchorControlPanel() {
-    if (anchorControlPanel) {
-        anchorControlPanel.style.display = 'none';
-    }
-    if (markerOutsideClickHandler) {
-        document.removeEventListener('click', markerOutsideClickHandler);
-        markerOutsideClickHandler = null;
-    }
-    if (markerEscapeHandler) {
-        document.removeEventListener('keydown', markerEscapeHandler);
-        markerEscapeHandler = null;
-    }
-}
-
-function attachAnchorOutsideClickHandler() {
-    if (markerOutsideClickHandler) return;
-    markerOutsideClickHandler = function(e) {
-        const gutter = document.getElementById('tableAnchorGutter');
-        if (gutter && !gutter.contains(e.target)) {
-            hideAnchorControlPanel();
-        }
-    };
-    // Отложить регистрацию, чтобы не срабатывало на текущий клик
-    setTimeout(() => document.addEventListener('click', markerOutsideClickHandler), 0);
-}
-
-function attachAnchorEscapeHandler() {
-    if (markerEscapeHandler) return;
-    markerEscapeHandler = function(e) {
-        if (e.key === 'Escape') {
-            hideAnchorControlPanel();
-        }
-    };
-    document.addEventListener('keydown', markerEscapeHandler);
-}
-
-function updateAnchorControlPanelState() {
-    if (!anchorControlPanel) return;
-    const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
-    const moveUpBtn = anchorControlPanel.querySelector('.anchor-move-up-btn');
-    const moveDownBtn = anchorControlPanel.querySelector('.anchor-move-down-btn');
-    const totalRows = Math.max(1, tableData.length);
-
-    if (toggleBtn) {
-        toggleBtn.textContent = isMarkerEnabled ? 'Выкл' : 'Вкл';
-    }
-    if (moveUpBtn) {
-        moveUpBtn.disabled = tokenizationMarkerRow <= 1;
-    }
-    if (moveDownBtn) {
-        moveDownBtn.disabled = tokenizationMarkerRow >= totalRows;
-    }
-}
-
-function showAnchorControlPanel(targetRowElement) {
-    if (!anchorControlPanel || !targetRowElement) return;
-    
-    updateAnchorControlPanelState();
-    anchorControlPanel.style.display = 'flex';
-    positionAnchorControlPanel(targetRowElement);
-    
-    attachAnchorOutsideClickHandler();
-    attachAnchorEscapeHandler();
-}
-
-function focusAnchorControlsOnMarker() {
-    const gutter = document.getElementById('tableAnchorGutter');
-    const tableContainer = document.getElementById('tableContainer');
-    if (!gutter) return;
-    const rows = gutter.querySelectorAll('.table-anchor-row');
-    const targetRow = rows[tokenizationMarkerRow - 1];
-    if (targetRow) {
-        showAnchorControlPanel(targetRow);
-        if (tableContainer) {
-            tableContainer.scrollTop = targetRow.offsetTop;
-            gutter.scrollTop = targetRow.offsetTop;
-        }
-    } else {
-        hideAnchorControlPanel();
-    }
-}
-
-function setMarkerRow(rowNumber, openControls = false) {
+function setMarkerRow(rowNumber) {
     tokenizationMarkerRow = Math.max(1, Math.min(rowNumber, Math.max(1, tableData.length)));
     recalculateTokenizationStartRow();
     displayTable();
     setupTokenizationAnchor();
-    if (openControls) {
-        focusAnchorControlsOnMarker();
-    } else {
-        hideAnchorControlPanel();
-    }
 }
 
 function toggleMarkerEnabled() {
@@ -652,21 +525,6 @@ function toggleMarkerEnabled() {
     recalculateTokenizationStartRow();
     displayTable();
     setupTokenizationAnchor();
-    focusAnchorControlsOnMarker();
-}
-
-function moveMarkerUp() {
-    if (tableData.length === 0) return;
-    if (tokenizationMarkerRow > 1) {
-        setMarkerRow(tokenizationMarkerRow - 1, true);
-    }
-}
-
-function moveMarkerDown() {
-    if (tableData.length === 0) return;
-    if (tokenizationMarkerRow < tableData.length) {
-        setMarkerRow(tokenizationMarkerRow + 1, true);
-    }
 }
 
 function registerMarkerInteractions(dotElement, rowElement) {
@@ -686,7 +544,6 @@ function startMarkerDrag(e, rowElement) {
     markerDragCandidateRow = tokenizationMarkerRow;
     markerDragStart = { x: e.clientX, y: e.clientY };
 
-    hideAnchorControlPanel();
     clearMarkerDragHighlight();
 
     document.addEventListener('mousemove', onMarkerDragMove);
@@ -696,6 +553,7 @@ function startMarkerDrag(e, rowElement) {
     const dot = rowElement.querySelector('.anchor-dot');
     if (dot) {
         dot.classList.add('dragging');
+        dot.classList.add('drag-hidden');
     }
 }
 
@@ -736,6 +594,7 @@ function endMarkerDrag(e) {
         const activeDot = gutter.querySelector('.anchor-dot.dragging');
         if (activeDot) {
             activeDot.classList.remove('dragging');
+            activeDot.classList.remove('drag-hidden');
         }
     }
 
@@ -746,14 +605,13 @@ function endMarkerDrag(e) {
 
     if (wasActiveDrag) {
         clearMarkerDragHighlight();
-        setMarkerRow(candidateRow, false);
+        clearMarkerGhost();
+        setMarkerRow(candidateRow);
     } else {
-        // Обычный клик без drag — открыть поповер
-        const rows = gutter ? gutter.querySelectorAll('.table-anchor-row') : [];
-        const targetRow = rows[tokenizationMarkerRow - 1];
-        if (targetRow) {
-            showAnchorControlPanel(targetRow);
-        }
+        // Короткий клик без drag — переключение маркера
+        toggleMarkerEnabled();
+        clearMarkerGhost();
+        setupTokenizationAnchor();
     }
 }
 
@@ -789,6 +647,7 @@ function clearMarkerDragHighlight() {
     if (table) {
         table.querySelectorAll('tbody tr.drag-hover').forEach(el => el.classList.remove('drag-hover'));
     }
+    clearMarkerGhost();
 }
 
 function applyMarkerDragHighlight(rowNumber) {
@@ -805,6 +664,8 @@ function applyMarkerDragHighlight(rowNumber) {
     if (tableRows[rowNumber - 1]) {
         tableRows[rowNumber - 1].classList.add('drag-hover');
     }
+
+    showMarkerGhost(rowNumber);
 }
 
 function handleMarkerAutoScroll(clientY, gutter) {
@@ -823,34 +684,31 @@ function handleMarkerAutoScroll(clientY, gutter) {
 
 function positionAnchorControlPanel(targetRowElement) {
     const gutter = document.getElementById('tableAnchorGutter');
-    if (!anchorControlPanel || !gutter || !targetRowElement) return;
+    if (!gutter || !targetRowElement) return;
+}
 
-    const gutterRect = gutter.getBoundingClientRect();
+function showMarkerGhost(rowNumber) {
+    const gutter = document.getElementById('tableAnchorGutter');
+    if (!gutter) return;
+    const gutterRows = gutter.querySelectorAll('.table-anchor-row');
+    const targetRow = gutterRows[rowNumber - 1];
+    if (!targetRow) return;
 
-    // Предварительно показать для измерения
-    anchorControlPanel.style.visibility = 'hidden';
-    anchorControlPanel.style.display = 'flex';
-    const panelWidth = anchorControlPanel.offsetWidth;
-    const panelHeight = anchorControlPanel.offsetHeight;
-
-    // Позиционирование вертикально по центру строки
-    let top = targetRowElement.offsetTop + (targetRowElement.offsetHeight - panelHeight) / 2;
-    const minTop = gutter.scrollTop;
-    const maxTop = gutter.scrollTop + gutter.clientHeight - panelHeight;
-    top = Math.max(minTop, Math.min(top, maxTop));
-
-    // Позиционирование по горизонтали с учётом видимой области
-    let left = gutter.clientWidth + 8;
-    if (gutterRect.left + left + panelWidth > window.innerWidth - 8) {
-        left = gutter.clientWidth - panelWidth - 8;
-    }
-    if (gutterRect.left + left < 8) {
-        left = -panelWidth - 8;
+    if (!markerGhostElement) {
+        markerGhostElement = document.createElement('div');
+        markerGhostElement.className = 'anchor-dot drag-ghost';
     }
 
-    anchorControlPanel.style.top = `${top}px`;
-    anchorControlPanel.style.left = `${left}px`;
-    anchorControlPanel.style.visibility = 'visible';
+    if (markerGhostElement.parentElement !== targetRow) {
+        markerGhostElement.remove();
+        targetRow.appendChild(markerGhostElement);
+    }
+}
+
+function clearMarkerGhost() {
+    if (markerGhostElement && markerGhostElement.parentElement) {
+        markerGhostElement.parentElement.removeChild(markerGhostElement);
+    }
 }
 
 // Генерация base64url токена
@@ -883,17 +741,11 @@ function tokenizeColumns() {
     recalculateTokenizationStartRow();
     
     const hadTokensBefore = hasTokenizedData && tokenizedColumns.size > 0;
-    const startRow = getTokenizationStartIndex(); // 0-based индекс первой токенизируемой строки
     let tokenCreated = false;
     
     // Токенизировать только выбранные (жёлтые) столбцы
     selectedColumns.forEach(colIndex => {
         tableData.forEach((rowData, rowIndex) => {
-            // Пропустить строки до стартовой строки
-            if (rowIndex < startRow) {
-                return;
-            }
-            
             const cellInfo = rowData[colIndex];
             const originalValue = cellInfo.original;
             
