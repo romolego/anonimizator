@@ -149,6 +149,12 @@ h3 {
     cursor: pointer;
 }
 
+.anchor-dot.dragging {
+    cursor: grabbing;
+    transform: scale(1.15);
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+}
+
 .anchor-dot.active {
     background-color: #007bff;
     border-color: #007bff;
@@ -162,6 +168,14 @@ h3 {
     box-shadow: none;
 }
 
+.table-anchor-row.drag-hover {
+    background-color: #e7f1ff;
+}
+
+.table-container tbody tr.drag-hover td {
+    background-color: #e7f1ff !important;
+}
+
 .anchor-control-panel {
     position: absolute;
     left: 38px;
@@ -172,15 +186,18 @@ h3 {
     background: #fff;
     border: 1px solid #ddd;
     border-radius: 6px;
-    padding: 6px 8px;
+    padding: 8px 10px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     z-index: 25;
     white-space: nowrap;
+    flex-direction: column;
 }
 
 .anchor-control-panel button {
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+    width: 100%;
+    text-align: center;
 }
 
 .anchor-control-panel button:disabled {

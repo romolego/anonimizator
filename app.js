@@ -18,6 +18,11 @@ let tableExported = false; // Флаг экспорта таблицы
 let dictionaryExported = false; // Флаг экспорта словаря
 let anchorControlPanel = null; // Панель управления маркером
 let markerOutsideClickHandler = null;
+let markerEscapeHandler = null;
+let isMarkerDragging = false;
+let markerDragActivated = false;
+let markerDragCandidateRow = 1;
+let markerDragStart = { x: 0, y: 0 };
 
 // Пересчитать стартовую строку токенизации на основе маркера
 function recalculateTokenizationStartRow() {
@@ -269,6 +274,7 @@ function displayTable() {
 
     // Пересчитать стартовую строку на случай изменения числа строк
     recalculateTokenizationStartRow();
+    clearMarkerDragHighlight();
     
     // Обновить синхронизацию скролла и якорь после отрисовки
     setTimeout(() => {
@@ -483,10 +489,7 @@ function setupTokenizationAnchor() {
                 dot.classList.add('disabled');
             }
             dot.title = isMarkerEnabled ? 'Начало токенизации' : 'Маркер выключен';
-            dot.addEventListener('click', (e) => {
-                e.stopPropagation();
-                showAnchorControlPanel(anchorRow);
-            });
+            registerMarkerInteractions(dot, anchorRow);
             anchorRow.appendChild(dot);
             markerRowElement = anchorRow;
         }
@@ -558,6 +561,10 @@ function hideAnchorControlPanel() {
         document.removeEventListener('click', markerOutsideClickHandler);
         markerOutsideClickHandler = null;
     }
+    if (markerEscapeHandler) {
+        document.removeEventListener('keydown', markerEscapeHandler);
+        markerEscapeHandler = null;
+    }
 }
 
 function attachAnchorOutsideClickHandler() {
@@ -572,6 +579,16 @@ function attachAnchorOutsideClickHandler() {
     setTimeout(() => document.addEventListener('click', markerOutsideClickHandler), 0);
 }
 
+function attachAnchorEscapeHandler() {
+    if (markerEscapeHandler) return;
+    markerEscapeHandler = function(e) {
+        if (e.key === 'Escape') {
+            hideAnchorControlPanel();
+        }
+    };
+    document.addEventListener('keydown', markerEscapeHandler);
+}
+
 function updateAnchorControlPanelState() {
     if (!anchorControlPanel) return;
     const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
@@ -580,7 +597,7 @@ function updateAnchorControlPanelState() {
     const totalRows = Math.max(1, tableData.length);
 
     if (toggleBtn) {
-        toggleBtn.textContent = isMarkerEnabled ? 'Выключить маркер' : 'Включить маркер';
+        toggleBtn.textContent = isMarkerEnabled ? 'Выкл' : 'Вкл';
     }
     if (moveUpBtn) {
         moveUpBtn.disabled = tokenizationMarkerRow <= 1;
@@ -595,10 +612,10 @@ function showAnchorControlPanel(targetRowElement) {
     
     updateAnchorControlPanelState();
     anchorControlPanel.style.display = 'flex';
-    anchorControlPanel.style.top = `${targetRowElement.offsetTop}px`;
-    anchorControlPanel.style.left = '38px';
+    positionAnchorControlPanel(targetRowElement);
     
     attachAnchorOutsideClickHandler();
+    attachAnchorEscapeHandler();
 }
 
 function focusAnchorControlsOnMarker() {
@@ -650,6 +667,190 @@ function moveMarkerDown() {
     if (tokenizationMarkerRow < tableData.length) {
         setMarkerRow(tokenizationMarkerRow + 1, true);
     }
+}
+
+function registerMarkerInteractions(dotElement, rowElement) {
+    if (!dotElement || !rowElement) return;
+
+    dotElement.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        startMarkerDrag(e, rowElement);
+    });
+}
+
+function startMarkerDrag(e, rowElement) {
+    isMarkerDragging = true;
+    markerDragActivated = false;
+    markerDragCandidateRow = tokenizationMarkerRow;
+    markerDragStart = { x: e.clientX, y: e.clientY };
+
+    hideAnchorControlPanel();
+    clearMarkerDragHighlight();
+
+    document.addEventListener('mousemove', onMarkerDragMove);
+    document.addEventListener('mouseup', endMarkerDrag);
+    document.addEventListener('mouseleave', endMarkerDrag);
+
+    const dot = rowElement.querySelector('.anchor-dot');
+    if (dot) {
+        dot.classList.add('dragging');
+    }
+}
+
+function onMarkerDragMove(e) {
+    if (!isMarkerDragging) return;
+
+    const dx = e.clientX - markerDragStart.x;
+    const dy = e.clientY - markerDragStart.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (!markerDragActivated && distance > 3) {
+        markerDragActivated = true;
+    }
+    if (!markerDragActivated) return;
+
+    const gutter = document.getElementById('tableAnchorGutter');
+    if (!gutter) return;
+    const rows = gutter.querySelectorAll('.table-anchor-row');
+    if (!rows.length) return;
+
+    const candidate = resolveMarkerRowByPointer(e.clientY, rows, gutter);
+    if (candidate !== null) {
+        markerDragCandidateRow = candidate;
+        applyMarkerDragHighlight(candidate);
+    }
+
+    handleMarkerAutoScroll(e.clientY, gutter);
+}
+
+function endMarkerDrag(e) {
+    if (!isMarkerDragging) return;
+
+    document.removeEventListener('mousemove', onMarkerDragMove);
+    document.removeEventListener('mouseup', endMarkerDrag);
+    document.removeEventListener('mouseleave', endMarkerDrag);
+
+    const gutter = document.getElementById('tableAnchorGutter');
+    if (gutter) {
+        const activeDot = gutter.querySelector('.anchor-dot.dragging');
+        if (activeDot) {
+            activeDot.classList.remove('dragging');
+        }
+    }
+
+    const wasActiveDrag = markerDragActivated;
+    const candidateRow = markerDragCandidateRow;
+    isMarkerDragging = false;
+    markerDragActivated = false;
+
+    if (wasActiveDrag) {
+        clearMarkerDragHighlight();
+        setMarkerRow(candidateRow, false);
+    } else {
+        // Обычный клик без drag — открыть поповер
+        const rows = gutter ? gutter.querySelectorAll('.table-anchor-row') : [];
+        const targetRow = rows[tokenizationMarkerRow - 1];
+        if (targetRow) {
+            showAnchorControlPanel(targetRow);
+        }
+    }
+}
+
+function resolveMarkerRowByPointer(clientY, rows, gutter) {
+    let candidate = null;
+    let minDistance = Infinity;
+    rows.forEach((row, index) => {
+        const rect = row.getBoundingClientRect();
+        if (clientY >= rect.top && clientY <= rect.bottom) {
+            candidate = index + 1;
+            minDistance = 0;
+        } else {
+            const distance = Math.min(Math.abs(clientY - rect.top), Math.abs(clientY - rect.bottom));
+            if (distance < minDistance) {
+                minDistance = distance;
+                candidate = index + 1;
+            }
+        }
+    });
+    if (candidate === null) {
+        return 1;
+    }
+    const total = Math.max(1, rows.length);
+    return Math.max(1, Math.min(candidate, total));
+}
+
+function clearMarkerDragHighlight() {
+    const gutter = document.getElementById('tableAnchorGutter');
+    const table = document.getElementById('dataTable');
+    if (gutter) {
+        gutter.querySelectorAll('.table-anchor-row.drag-hover').forEach(el => el.classList.remove('drag-hover'));
+    }
+    if (table) {
+        table.querySelectorAll('tbody tr.drag-hover').forEach(el => el.classList.remove('drag-hover'));
+    }
+}
+
+function applyMarkerDragHighlight(rowNumber) {
+    const gutter = document.getElementById('tableAnchorGutter');
+    const table = document.getElementById('dataTable');
+    clearMarkerDragHighlight();
+
+    const gutterRows = gutter ? gutter.querySelectorAll('.table-anchor-row') : [];
+    const tableRows = table ? table.querySelectorAll('tbody tr') : [];
+
+    if (gutterRows[rowNumber - 1]) {
+        gutterRows[rowNumber - 1].classList.add('drag-hover');
+    }
+    if (tableRows[rowNumber - 1]) {
+        tableRows[rowNumber - 1].classList.add('drag-hover');
+    }
+}
+
+function handleMarkerAutoScroll(clientY, gutter) {
+    if (!gutter) return;
+    const rect = gutter.getBoundingClientRect();
+    const edge = 24;
+    const scrollStep = 20;
+
+    if (clientY < rect.top + edge) {
+        gutter.scrollTop = Math.max(0, gutter.scrollTop - scrollStep);
+    } else if (clientY > rect.bottom - edge) {
+        const maxScroll = gutter.scrollHeight - gutter.clientHeight;
+        gutter.scrollTop = Math.min(maxScroll, gutter.scrollTop + scrollStep);
+    }
+}
+
+function positionAnchorControlPanel(targetRowElement) {
+    const gutter = document.getElementById('tableAnchorGutter');
+    if (!anchorControlPanel || !gutter || !targetRowElement) return;
+
+    const gutterRect = gutter.getBoundingClientRect();
+
+    // Предварительно показать для измерения
+    anchorControlPanel.style.visibility = 'hidden';
+    anchorControlPanel.style.display = 'flex';
+    const panelWidth = anchorControlPanel.offsetWidth;
+    const panelHeight = anchorControlPanel.offsetHeight;
+
+    // Позиционирование вертикально по центру строки
+    let top = targetRowElement.offsetTop + (targetRowElement.offsetHeight - panelHeight) / 2;
+    const minTop = gutter.scrollTop;
+    const maxTop = gutter.scrollTop + gutter.clientHeight - panelHeight;
+    top = Math.max(minTop, Math.min(top, maxTop));
+
+    // Позиционирование по горизонтали с учётом видимой области
+    let left = gutter.clientWidth + 8;
+    if (gutterRect.left + left + panelWidth > window.innerWidth - 8) {
+        left = gutter.clientWidth - panelWidth - 8;
+    }
+    if (gutterRect.left + left < 8) {
+        left = -panelWidth - 8;
+    }
+
+    anchorControlPanel.style.top = `${top}px`;
+    anchorControlPanel.style.left = `${left}px`;
+    anchorControlPanel.style.visibility = 'visible';
 }
 
 // Генерация base64url токена
