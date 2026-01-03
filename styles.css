@@ -109,7 +109,7 @@ h3 {
     border-bottom: 1px solid #ddd;
     border-radius: 0 0 0 4px;
     position: relative;
-    cursor: pointer;
+    cursor: default;
     user-select: none;
     overflow-y: auto;
     overflow-x: hidden;
@@ -131,7 +131,7 @@ h3 {
     align-items: center;
     justify-content: center;
     height: 30px;
-    cursor: pointer;
+    cursor: default;
 }
 
 .table-anchor-row:hover .anchor-dot {
@@ -146,6 +146,7 @@ h3 {
     background-color: transparent;
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
     box-sizing: border-box;
+    cursor: pointer;
 }
 
 .anchor-dot.active {

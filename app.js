@@ -9,6 +9,7 @@ let selectedColumns = new Set(); // выбранные столбцы для т�
 let tokenizedColumns = new Set(); // токенизированные столбцы (зелёные)
 let viewMode = 'original'; // 'tokenized', 'original', 'both'
 let hasTokenizedData = false; // есть ли токенизированные данные
+let hasAutoSwitchedToTokenView = false; // автопереключение в режим токенов выполнено
 let tokenizationStartRow = 1; // Первая строка, участвующая в токенизации (1-based)
 let tokenizationMarkerRow = 1; // Строка, напротив которой стоит маркер (1-based)
 let isMarkerEnabled = true; // Включен ли маркер исключения верхних строк
@@ -20,15 +21,16 @@ let markerOutsideClickHandler = null;
 
 // Пересчитать стартовую строку токенизации на основе маркера
 function recalculateTokenizationStartRow() {
+    const totalRows = tableData.length;
+    const safeTotal = Math.max(1, totalRows);
+    tokenizationMarkerRow = Math.max(1, Math.min(tokenizationMarkerRow, safeTotal));
+
     if (!isMarkerEnabled) {
         tokenizationStartRow = 1;
         return;
     }
 
-    const totalRows = tableData.length;
-    const safeTotal = Math.max(1, totalRows);
-    tokenizationMarkerRow = Math.max(1, Math.min(tokenizationMarkerRow, safeTotal));
-    tokenizationStartRow = Math.min(totalRows + 1, tokenizationMarkerRow + 1);
+    tokenizationStartRow = tokenizationMarkerRow;
 }
 
 // Получить 0-based индекс стартовой строки
@@ -89,6 +91,7 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
             tokenizedColumns.clear();
             tableData = [];
             hasTokenizedData = false;
+            hasAutoSwitchedToTokenView = false;
             viewMode = 'original';
             tokenizationMarkerRow = 1;
             isMarkerEnabled = true;
@@ -146,6 +149,7 @@ function recognizeData() {
     selectedColumns.clear();
     tokenizedColumns.clear();
     hasTokenizedData = false;
+    hasAutoSwitchedToTokenView = false;
     viewMode = 'original';
     tokenizationMarkerRow = 1;
     isMarkerEnabled = true;
@@ -216,6 +220,7 @@ function performClear() {
     selectedColumns.clear();
     tokenizedColumns.clear();
     hasTokenizedData = false;
+    hasAutoSwitchedToTokenView = false;
     viewMode = 'original';
     tokenizationStartRow = 1;
     tokenizationMarkerRow = 1;
@@ -446,7 +451,10 @@ function setupTokenizationAnchor() {
     const table = document.getElementById('dataTable');
     const tableContainer = document.getElementById('tableContainer');
     
-    if (!gutter || !table || tableData.length === 0) return;
+    if (!gutter || !table || tableData.length === 0) {
+        hideAnchorControlPanel();
+        return;
+    }
     
     const dataRows = table.querySelectorAll('tbody tr');
     if (dataRows.length === 0) return;
@@ -461,27 +469,28 @@ function setupTokenizationAnchor() {
     
     const rowsWrapper = document.createElement('div');
     rowsWrapper.className = 'table-anchor-rows';
-    
+
+    let markerRowElement = null;
     dataRows.forEach((rowEl, index) => {
         const anchorRow = document.createElement('div');
         anchorRow.className = 'table-anchor-row';
         anchorRow.style.height = `${rowEl.offsetHeight || 30}px`;
-        
-        const dot = document.createElement('div');
-        dot.className = 'anchor-dot';
+
         if (tokenizationMarkerRow === index + 1) {
-            dot.classList.add('active');
+            const dot = document.createElement('div');
+            dot.className = 'anchor-dot active';
+            if (!isMarkerEnabled) {
+                dot.classList.add('disabled');
+            }
+            dot.title = isMarkerEnabled ? 'Начало токенизации' : 'Маркер выключен';
+            dot.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showAnchorControlPanel(anchorRow);
+            });
+            anchorRow.appendChild(dot);
+            markerRowElement = anchorRow;
         }
-        if (!isMarkerEnabled) {
-            dot.classList.add('disabled');
-        }
-        anchorRow.appendChild(dot);
-        
-        anchorRow.addEventListener('click', (e) => {
-            e.stopPropagation();
-            setMarkerRow(index + 1, true);
-        });
-        
+
         rowsWrapper.appendChild(anchorRow);
     });
     
@@ -492,8 +501,32 @@ function setupTokenizationAnchor() {
         anchorControlPanel.className = 'anchor-control-panel';
         anchorControlPanel.innerHTML = `
             <button class="anchor-toggle-btn"></button>
-            <button class="anchor-move-btn">Переместить вниз</button>
+            <button class="anchor-move-up-btn">Переместить вверх</button>
+            <button class="anchor-move-down-btn">Переместить вниз</button>
         `;
+
+        const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
+        const moveUpBtn = anchorControlPanel.querySelector('.anchor-move-up-btn');
+        const moveDownBtn = anchorControlPanel.querySelector('.anchor-move-down-btn');
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleMarkerEnabled();
+            });
+        }
+        if (moveUpBtn) {
+            moveUpBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveMarkerUp();
+            });
+        }
+        if (moveDownBtn) {
+            moveDownBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveMarkerDown();
+            });
+        }
     }
     
     anchorControlPanel.style.display = 'none';
@@ -510,8 +543,10 @@ function setupTokenizationAnchor() {
     
     gutter.scrollTop = tableContainer.scrollTop;
 
-    if (panelWasOpen) {
-        focusAnchorControlsOnMarker();
+    if (panelWasOpen && markerRowElement) {
+        showAnchorControlPanel(markerRowElement);
+    } else if (!markerRowElement) {
+        hideAnchorControlPanel();
     }
 }
 
@@ -537,26 +572,28 @@ function attachAnchorOutsideClickHandler() {
     setTimeout(() => document.addEventListener('click', markerOutsideClickHandler), 0);
 }
 
+function updateAnchorControlPanelState() {
+    if (!anchorControlPanel) return;
+    const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
+    const moveUpBtn = anchorControlPanel.querySelector('.anchor-move-up-btn');
+    const moveDownBtn = anchorControlPanel.querySelector('.anchor-move-down-btn');
+    const totalRows = Math.max(1, tableData.length);
+
+    if (toggleBtn) {
+        toggleBtn.textContent = isMarkerEnabled ? 'Выключить маркер' : 'Включить маркер';
+    }
+    if (moveUpBtn) {
+        moveUpBtn.disabled = tokenizationMarkerRow <= 1;
+    }
+    if (moveDownBtn) {
+        moveDownBtn.disabled = tokenizationMarkerRow >= totalRows;
+    }
+}
+
 function showAnchorControlPanel(targetRowElement) {
     if (!anchorControlPanel || !targetRowElement) return;
     
-    const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
-    const moveBtn = anchorControlPanel.querySelector('.anchor-move-btn');
-    
-    toggleBtn.textContent = isMarkerEnabled ? 'Выключить маркер' : 'Включить маркер';
-    moveBtn.disabled = tokenizationMarkerRow >= tableData.length;
-    
-    toggleBtn.onclick = function(e) {
-        e.stopPropagation();
-        toggleMarkerEnabled();
-        focusAnchorControlsOnMarker();
-    };
-    
-    moveBtn.onclick = function(e) {
-        e.stopPropagation();
-        moveMarkerDown();
-    };
-    
+    updateAnchorControlPanelState();
     anchorControlPanel.style.display = 'flex';
     anchorControlPanel.style.top = `${targetRowElement.offsetTop}px`;
     anchorControlPanel.style.left = '38px';
@@ -566,11 +603,16 @@ function showAnchorControlPanel(targetRowElement) {
 
 function focusAnchorControlsOnMarker() {
     const gutter = document.getElementById('tableAnchorGutter');
+    const tableContainer = document.getElementById('tableContainer');
     if (!gutter) return;
     const rows = gutter.querySelectorAll('.table-anchor-row');
     const targetRow = rows[tokenizationMarkerRow - 1];
     if (targetRow) {
         showAnchorControlPanel(targetRow);
+        if (tableContainer) {
+            tableContainer.scrollTop = targetRow.offsetTop;
+            gutter.scrollTop = targetRow.offsetTop;
+        }
     } else {
         hideAnchorControlPanel();
     }
@@ -593,16 +635,20 @@ function toggleMarkerEnabled() {
     recalculateTokenizationStartRow();
     displayTable();
     setupTokenizationAnchor();
+    focusAnchorControlsOnMarker();
+}
+
+function moveMarkerUp() {
+    if (tableData.length === 0) return;
+    if (tokenizationMarkerRow > 1) {
+        setMarkerRow(tokenizationMarkerRow - 1, true);
+    }
 }
 
 function moveMarkerDown() {
     if (tableData.length === 0) return;
     if (tokenizationMarkerRow < tableData.length) {
-        tokenizationMarkerRow += 1;
-        recalculateTokenizationStartRow();
-        displayTable();
-        setupTokenizationAnchor();
-        focusAnchorControlsOnMarker();
+        setMarkerRow(tokenizationMarkerRow + 1, true);
     }
 }
 
@@ -635,6 +681,7 @@ function tokenizeColumns() {
 
     recalculateTokenizationStartRow();
     
+    const hadTokensBefore = hasTokenizedData && tokenizedColumns.size > 0;
     const startRow = getTokenizationStartIndex(); // 0-based индекс первой токенизируемой строки
     let tokenCreated = false;
     
@@ -677,6 +724,7 @@ function tokenizeColumns() {
     });
     
     hasTokenizedData = hasTokenizedData || tokenCreated;
+    const hasTokensNow = hasTokenizedData && tokenizedColumns.size > 0;
     
     // Сбросить ID экспорта при новой токенизации (новая сессия)
     currentExportId = null;
@@ -684,6 +732,14 @@ function tokenizeColumns() {
     // Показать экспорт
     document.getElementById('downloadSection').style.display = 'block';
     updateViewModeAvailability();
+    if (!hasAutoSwitchedToTokenView && !hadTokensBefore && hasTokensNow) {
+        viewMode = 'tokenized';
+        const viewSelect = document.getElementById('viewModeSelect');
+        if (viewSelect) {
+            viewSelect.value = 'tokenized';
+        }
+        hasAutoSwitchedToTokenView = true;
+    }
     
     // Обновить отображение таблицы
     displayTable();

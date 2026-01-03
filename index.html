@@ -76,15 +76,21 @@
                     <button class="download-button-data" onclick="downloadXLSX()">Скачать XLSX</button>
                     <button class="download-button-dict" onclick="downloadJSON()">Скачать JSON-словарь</button>
                 </div>
-                <div class="prompt-subsection">
-                    <div class="prompt-subsection-header">
-                        <h4>Промпт для нейросети</h4>
-                        <button class="prompt-toggle-button" onclick="togglePromptSection(this)">Развернуть</button>
-                        <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
-                    </div>
-                    <div class="prompt-section" id="promptSection" style="display: none;">
-                        <div class="prompt-card">
-                            <div class="prompt-text" id="promptTextarea">В таблице ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
+            </div>
+        </div>
+
+        <!-- Промпт для нейросети -->
+        <div class="section" id="promptStandaloneSection">
+            <h2>Промпт для нейросети</h2>
+            <div class="prompt-subsection">
+                <div class="prompt-subsection-header">
+                    <h4>Текст промпта</h4>
+                    <button class="prompt-toggle-button" onclick="togglePromptSection(this)">Развернуть</button>
+                    <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
+                </div>
+                <div class="prompt-section" id="promptSection" style="display: none;">
+                    <div class="prompt-card">
+                        <div class="prompt-text" id="promptTextarea">В таблице ниже встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
 Жёсткое правило: не изменяй токены [[...]] ни при каких условиях.
 
 (1) Токен — это подстрока от [[ до ]] целиком. Запрещено разрывать токен переносом строки или вставлять внутрь токена пробелы/переносы.
@@ -95,7 +101,6 @@
 (6) Если нужно сослаться на значение — используй токен ровно как он дан, целиком, включая [[ и ]]. Если токен встречается несколько раз — считай, что это одно и то же значение.
 (7) Если в ответе используются токены — выводи ответ простым текстом (без Markdown-таблиц, код-блоков и ссылок), чтобы не исказить токены.
 (8) Перед отправкой ответа проверь, что каждый токен в твоём ответе совпадает с токеном из входных данных символ-в-символ.</div>
-                        </div>
                     </div>
                 </div>
             </div>
