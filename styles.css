@@ -89,7 +89,7 @@ h3 {
 }
 
 .table-container {
-    max-height: 400px;
+    max-height: 600px;
     overflow: auto;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -99,13 +99,19 @@ table {
     width: 100%;
     border-collapse: collapse;
     background-color: white;
+    table-layout: auto;
 }
 
 th, td {
     border: 1px solid #ddd;
     padding: 8px;
     text-align: left;
-    white-space: nowrap;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 300px;
+    min-width: 100px;
 }
 
 th {
@@ -113,6 +119,7 @@ th {
     position: sticky;
     top: 0;
     z-index: 10;
+    vertical-align: middle;
 }
 
 tr:nth-child(even) {
@@ -250,6 +257,17 @@ button:disabled {
     margin-top: 20px;
 }
 
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.result-header h3 {
+    margin: 0;
+}
+
 .result-text {
     padding: 15px;
     border: 1px solid #ddd;
@@ -260,6 +278,19 @@ button:disabled {
     word-wrap: break-word;
     font-family: monospace;
     font-size: 14px;
+}
+
+.stats-summary {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #f0f0f0;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #666;
+}
+
+.stats-summary div {
+    margin: 3px 0;
 }
 
 select {
@@ -275,6 +306,96 @@ input[type="file"] {
     border: 1px solid #ddd;
     border-radius: 4px;
     font-size: 14px;
+}
+
+.file-controls-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 20px;
+    flex-wrap: nowrap;
+}
+
+.file-control-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.file-control-item label {
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.file-control-item input[type="file"],
+.file-control-item select {
+    white-space: nowrap;
+}
+
+.column-checkbox {
+    margin-right: 5px;
+}
+
+.column-selected {
+    background-color: #fff9c4 !important; /* Жёлтый для выбранных */
+}
+
+.column-tokenized {
+    background-color: #c8e6c9 !important; /* Зелёный для токенизированных */
+}
+
+.column-selected.column-tokenized {
+    background-color: #c8e6c9 !important; /* Зелёный имеет приоритет */
+}
+
+.cell-tooltip {
+    position: relative;
+    cursor: help;
+}
+
+.cell-both-view {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cell-original-value {
+    font-weight: normal;
+    color: #333;
+}
+
+.cell-tokenized-value {
+    font-weight: normal;
+    color: #666;
+    font-size: 0.9em;
+}
+
+.tooltip {
+    position: absolute;
+    background-color: #333;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    pointer-events: none;
+    display: none;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 5px;
+}
+
+.cell-tooltip:hover .tooltip {
+    display: block;
+}
+
+.token-replaced {
+    background-color: #d4edda;
+    color: #155724;
+    padding: 2px 4px;
+    border-radius: 3px;
 }
 
 

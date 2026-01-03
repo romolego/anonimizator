@@ -25,31 +25,31 @@
                 <div class="file-control-item">
                     <button id="clearButton" onclick="clearAll()" style="display: none;">Очистить</button>
                 </div>
+                <div class="file-control-item">
+                    <button id="recognizeButton" onclick="recognizeData()" style="display: none;">Распознать данные</button>
+                </div>
             </div>
         </div>
 
-        <!-- Таблицы: исходная и результат -->
-        <div class="section" id="tablesSection" style="display: none;">
-            <h2>Таблицы</h2>
-            <div class="tables-comparison">
-                <div class="table-wrapper">
-                    <h3>Исходная таблица</h3>
-                    <div class="table-container" id="originalTableContainer">
-                        <table id="originalTable"></table>
-                    </div>
-                    <div style="margin-top: 10px;">
-                        <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
-                    </div>
+        <!-- Таблица -->
+        <div class="section" id="tableSection" style="display: none;">
+            <h2>Таблица</h2>
+            <div style="margin-bottom: 15px;">
+                <div id="viewModeWrapper" style="display: none; margin-bottom: 10px;">
+                    <label for="viewModeSelect">Режим отображения:</label>
+                    <select id="viewModeSelect" onchange="updateTableView()">
+                        <option value="tokenized">Показать токенизированные</option>
+                        <option value="original">Показать исходные</option>
+                        <option value="both">Показать оба</option>
+                    </select>
                 </div>
-                <div class="table-wrapper">
-                    <h3>Результат токенизации</h3>
-                    <div class="table-container" id="tokenizedTableContainer">
-                        <table id="tokenizedTable"></table>
-                    </div>
-                </div>
+                <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
+            </div>
+            <div class="table-container" id="tableContainer">
+                <table id="dataTable"></table>
             </div>
             
-            <div class="download-section" id="downloadSection" style="display: none;">
+            <div class="download-section" id="downloadSection" style="display: none; margin-top: 20px;">
                 <h3>Экспорт</h3>
                 <div class="download-buttons">
                     <button onclick="downloadCSV()">Скачать CSV</button>

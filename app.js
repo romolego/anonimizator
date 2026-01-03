@@ -1,13 +1,14 @@
 // Глобальные переменные
 let workbook = null;
 let currentSheet = null;
-let originalData = [];
-let tokenizedData = [];
+let tableData = []; // Массив объектов: {original: value, tokenized: value|null, isTokenized: boolean} для каждой ячейки
 let tokenDictionary = new Map(); // original -> token
 let reverseDictionary = new Map(); // token -> original
 let currentDictionary = new Map(); // для детокенизации
-let selectedColumns = new Set(); // выбранные столбцы для токенизации
-let scrollSyncEnabled = true; // флаг для предотвращения бесконечного цикла при синхронизации
+let selectedColumns = new Set(); // выбранные столбцы для токенизации (жёлтые)
+let tokenizedColumns = new Set(); // токенизированные столбцы (зелёные)
+let viewMode = 'tokenized'; // 'tokenized', 'original', 'both'
+let hasTokenizedData = false; // есть ли токенизированные данные
 
 // Загрузка файла
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -33,54 +34,91 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
                 sheetSelect.appendChild(option);
             });
             sheetSelectionWrapper.style.display = 'flex';
-            sheetSelect.onchange = loadSheet;
+            sheetSelect.onchange = function() {
+                // При смене листа сбрасываем состояние, но не строим таблицу
+                selectedColumns.clear();
+                tokenizedColumns.clear();
+                tableData = [];
+                hasTokenizedData = false;
+                document.getElementById('tableSection').style.display = 'none';
+                document.getElementById('viewModeWrapper').style.display = 'none';
+                document.getElementById('downloadSection').style.display = 'none';
+            };
         } else {
             sheetSelectionWrapper.style.display = 'none';
-            loadSheetByIndex(0);
         }
         
-        document.getElementById('clearButton').style.display = 'block';
+        document.getElementById('clearButton').style.display = 'inline-block';
+        document.getElementById('recognizeButton').style.display = 'inline-block';
     };
     reader.readAsArrayBuffer(file);
 });
 
-// Загрузка листа
-function loadSheet(e) {
-    const index = parseInt(e.target.value);
-    loadSheetByIndex(index);
-}
-
-function loadSheetByIndex(index) {
-    currentSheet = workbook.Sheets[workbook.SheetNames[index]];
-    originalData = XLSX.utils.sheet_to_json(currentSheet, {header: 1, defval: ''});
+// Распознать данные (построить таблицу)
+function recognizeData() {
+    if (!workbook) {
+        alert('Сначала выберите файл');
+        return;
+    }
     
+    const sheetSelect = document.getElementById('sheetSelect');
+    let sheetIndex = 0;
+    if (sheetSelect && sheetSelect.value !== undefined && sheetSelect.value !== '') {
+        sheetIndex = parseInt(sheetSelect.value);
+    }
+    
+    currentSheet = workbook.Sheets[workbook.SheetNames[sheetIndex]];
+    const rawData = XLSX.utils.sheet_to_json(currentSheet, {header: 1, defval: ''});
+    
+    // Инициализировать структуру данных
+    const maxCols = Math.max(...rawData.map(row => row.length), 0);
+    tableData = rawData.map(row => {
+        const cellData = [];
+        for (let i = 0; i < maxCols; i++) {
+            const value = row[i] || '';
+            cellData.push({
+                original: value,
+                tokenized: null,
+                isTokenized: false
+            });
+        }
+        return cellData;
+    });
+    
+    // Сбросить состояние
     selectedColumns.clear();
-    displayOriginalTable();
-    
-    // Скрыть результат токенизации
-    document.getElementById('tokenizedTableContainer').innerHTML = '<table id="tokenizedTable"></table>';
+    tokenizedColumns.clear();
+    hasTokenizedData = false;
+    viewMode = 'tokenized';
+    document.getElementById('viewModeWrapper').style.display = 'none';
     document.getElementById('downloadSection').style.display = 'none';
     
-    document.getElementById('tablesSection').style.display = 'block';
+    // Построить таблицу
+    displayTable();
+    document.getElementById('tableSection').style.display = 'block';
 }
 
 // Очистка всего состояния
 function clearAll() {
     workbook = null;
     currentSheet = null;
-    originalData = [];
-    tokenizedData = [];
+    tableData = [];
     tokenDictionary.clear();
     reverseDictionary.clear();
+    currentDictionary.clear();
     selectedColumns.clear();
+    tokenizedColumns.clear();
+    hasTokenizedData = false;
+    viewMode = 'tokenized';
     
     // Очистить UI
     document.getElementById('fileInput').value = '';
     document.getElementById('sheetSelectionWrapper').style.display = 'none';
     document.getElementById('clearButton').style.display = 'none';
-    document.getElementById('tablesSection').style.display = 'none';
-    document.getElementById('originalTable').innerHTML = '';
-    document.getElementById('tokenizedTable').innerHTML = '';
+    document.getElementById('recognizeButton').style.display = 'none';
+    document.getElementById('tableSection').style.display = 'none';
+    document.getElementById('viewModeWrapper').style.display = 'none';
+    document.getElementById('dataTable').innerHTML = '';
     document.getElementById('downloadSection').style.display = 'none';
     
     // Очистить детокенизацию
@@ -89,30 +127,39 @@ function clearAll() {
     document.getElementById('tokensList').innerHTML = '';
     document.getElementById('detokenizedText').innerHTML = '';
     document.getElementById('statsSummary').innerHTML = '';
-    currentDictionary.clear();
 }
 
-// Отображение исходной таблицы с чекбоксами в заголовках
-function displayOriginalTable() {
-    const table = document.getElementById('originalTable');
+// Отображение таблицы
+function displayTable() {
+    const table = document.getElementById('dataTable');
     table.innerHTML = '';
     
-    if (originalData.length === 0) return;
+    if (tableData.length === 0) return;
+    
+    const maxCols = tableData[0].length;
     
     // Создать заголовки с чекбоксами
     const headerRow = document.createElement('tr');
-    const maxCols = Math.max(...originalData.map(row => row.length));
     for (let i = 0; i < maxCols; i++) {
         const th = document.createElement('th');
-        th.className = selectedColumns.has(i) ? 'column-selected' : '';
+        
+        // Определить класс цвета столбца
+        if (tokenizedColumns.has(i)) {
+            th.className = 'column-tokenized';
+        } else if (selectedColumns.has(i)) {
+            th.className = 'column-selected';
+        }
         
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.className = 'column-checkbox';
         checkbox.value = i;
-        checkbox.checked = selectedColumns.has(i);
+        checkbox.checked = selectedColumns.has(i) || tokenizedColumns.has(i);
+        checkbox.disabled = tokenizedColumns.has(i); // Отключить чекбоксы для токенизированных столбцов
         checkbox.addEventListener('change', function() {
-            toggleColumnSelection(parseInt(this.value));
+            if (!this.disabled) {
+                toggleColumnSelection(parseInt(this.value));
+            }
         });
         
         th.appendChild(checkbox);
@@ -124,12 +171,56 @@ function displayOriginalTable() {
     table.appendChild(headerRow);
     
     // Создать строки данных
-    originalData.forEach(row => {
+    tableData.forEach((rowData, rowIndex) => {
         const tr = document.createElement('tr');
         for (let i = 0; i < maxCols; i++) {
             const td = document.createElement('td');
-            td.className = selectedColumns.has(i) ? 'column-selected' : '';
-            td.textContent = row[i] || '';
+            const cellInfo = rowData[i];
+            
+            // Определить класс цвета столбца
+            let cellClasses = [];
+            if (tokenizedColumns.has(i)) {
+                cellClasses.push('column-tokenized');
+            } else if (selectedColumns.has(i)) {
+                cellClasses.push('column-selected');
+            }
+            
+            // Отобразить значение в зависимости от режима просмотра
+            if (!cellInfo.isTokenized || !hasTokenizedData) {
+                // Нетокенизированная ячейка или нет токенизированных данных
+                td.textContent = cellInfo.original;
+                td.title = '';
+            } else {
+                // Токенизированная ячейка
+                if (viewMode === 'tokenized') {
+                    td.textContent = cellInfo.tokenized;
+                    td.title = cellInfo.original; // Tooltip с исходным значением
+                    cellClasses.push('cell-tooltip');
+                } else if (viewMode === 'original') {
+                    td.textContent = cellInfo.original;
+                    td.title = cellInfo.tokenized; // Tooltip с токеном
+                    cellClasses.push('cell-tooltip');
+                } else if (viewMode === 'both') {
+                    const div = document.createElement('div');
+                    div.className = 'cell-both-view';
+                    const origDiv = document.createElement('div');
+                    origDiv.className = 'cell-original-value';
+                    origDiv.textContent = cellInfo.original;
+                    const tokenDiv = document.createElement('div');
+                    tokenDiv.className = 'cell-tokenized-value';
+                    tokenDiv.textContent = cellInfo.tokenized;
+                    div.appendChild(origDiv);
+                    div.appendChild(tokenDiv);
+                    td.appendChild(div);
+                    td.title = '';
+                }
+            }
+            
+            // Установить классы ячейки
+            if (cellClasses.length > 0) {
+                td.className = cellClasses.join(' ');
+            }
+            
             tr.appendChild(td);
         }
         table.appendChild(tr);
@@ -138,42 +229,17 @@ function displayOriginalTable() {
 
 // Переключение выбора столбца
 function toggleColumnSelection(colIndex) {
+    if (tokenizedColumns.has(colIndex)) {
+        return; // Нельзя снять выбор с токенизированного столбца
+    }
+    
     if (selectedColumns.has(colIndex)) {
         selectedColumns.delete(colIndex);
     } else {
         selectedColumns.add(colIndex);
     }
     
-    // Обновить отображение исходной таблицы
-    displayOriginalTable();
-}
-
-// Настройка синхронизации прокрутки
-function setupScrollSync(container1Id, container2Id) {
-    const container1 = document.getElementById(container1Id);
-    const container2 = document.getElementById(container2Id);
-    
-    if (!container1 || !container2) return;
-    
-    // Удалить старые обработчики
-    container1.onscroll = null;
-    container2.onscroll = null;
-    
-    container1.onscroll = function() {
-        if (!scrollSyncEnabled) return;
-        scrollSyncEnabled = false;
-        container2.scrollTop = container1.scrollTop;
-        container2.scrollLeft = container1.scrollLeft;
-        scrollSyncEnabled = true;
-    };
-    
-    container2.onscroll = function() {
-        if (!scrollSyncEnabled) return;
-        scrollSyncEnabled = false;
-        container1.scrollTop = container2.scrollTop;
-        container1.scrollLeft = container2.scrollLeft;
-        scrollSyncEnabled = true;
-    };
+    displayTable();
 }
 
 // Генерация base64url токена
@@ -196,24 +262,18 @@ function generateToken() {
     return `[[${base64}]]`;
 }
 
-// Токенизация столбцов
+// Токенизация столбцов (накопительная)
 function tokenizeColumns() {
     if (selectedColumns.size === 0) {
         alert('Выберите хотя бы один столбец для токенизации');
         return;
     }
     
-    // Сбросить словари
-    tokenDictionary.clear();
-    reverseDictionary.clear();
-    
-    // Копировать данные
-    tokenizedData = originalData.map(row => [...row]);
-    
-    // Токенизировать выбранные столбцы
-    tokenizedData.forEach((row, rowIndex) => {
-        selectedColumns.forEach(colIndex => {
-            const originalValue = row[colIndex];
+    // Токенизировать только выбранные (жёлтые) столбцы
+    selectedColumns.forEach(colIndex => {
+        tableData.forEach((rowData, rowIndex) => {
+            const cellInfo = rowData[colIndex];
+            const originalValue = cellInfo.original;
             
             // Пропустить пустые значения
             if (!originalValue || originalValue.toString().trim() === '') {
@@ -224,63 +284,58 @@ function tokenizeColumns() {
             
             // Если значение уже есть в словаре, использовать существующий токен
             if (tokenDictionary.has(valueStr)) {
-                row[colIndex] = tokenDictionary.get(valueStr);
+                cellInfo.tokenized = tokenDictionary.get(valueStr);
             } else {
                 // Сгенерировать новый токен
                 const token = generateToken();
                 tokenDictionary.set(valueStr, token);
                 reverseDictionary.set(token, valueStr);
-                row[colIndex] = token;
+                cellInfo.tokenized = token;
             }
+            
+            cellInfo.isTokenized = true;
         });
+        
+        // Переместить столбец из selectedColumns в tokenizedColumns
+        tokenizedColumns.add(colIndex);
+        selectedColumns.delete(colIndex);
     });
     
-    displayTokenizedTable();
+    hasTokenizedData = true;
     
-    // Показать секцию результатов
-    document.getElementById('downloadSection').style.display = 'block';
+    // Показать переключатель режимов после первой токенизации
+    if (document.getElementById('viewModeWrapper').style.display === 'none') {
+        document.getElementById('viewModeWrapper').style.display = 'block';
+        document.getElementById('downloadSection').style.display = 'block';
+    }
+    
+    // Обновить отображение таблицы
+    displayTable();
 }
 
-// Отображение токенизированной таблицы
-function displayTokenizedTable() {
-    const table = document.getElementById('tokenizedTable');
-    table.innerHTML = '';
-    
-    if (tokenizedData.length === 0) return;
-    
-    // Создать заголовки
-    const headerRow = document.createElement('tr');
-    const maxCols = Math.max(...tokenizedData.map(row => row.length));
-    for (let i = 0; i < maxCols; i++) {
-        const th = document.createElement('th');
-        th.className = selectedColumns.has(i) ? 'column-selected' : '';
-        th.textContent = `Столбец ${i + 1}`;
-        headerRow.appendChild(th);
-    }
-    table.appendChild(headerRow);
-    
-    // Создать строки данных
-    tokenizedData.forEach(row => {
-        const tr = document.createElement('tr');
-        for (let i = 0; i < maxCols; i++) {
-            const td = document.createElement('td');
-            td.className = selectedColumns.has(i) ? 'column-selected' : '';
-            td.textContent = row[i] || '';
-            tr.appendChild(td);
-        }
-        table.appendChild(tr);
-    });
-    
-    // Настроить синхронизацию прокрутки после создания обеих таблиц
-    setupScrollSync('originalTableContainer', 'tokenizedTableContainer');
+// Обновление режима отображения таблицы
+function updateTableView() {
+    const select = document.getElementById('viewModeSelect');
+    viewMode = select.value;
+    displayTable();
 }
 
 // Скачать CSV
 function downloadCSV() {
-    if (tokenizedData.length === 0) return;
+    if (tableData.length === 0) return;
+    
+    // Получить данные для экспорта (токенизированные значения)
+    const exportData = tableData.map(rowData => {
+        return rowData.map(cellInfo => {
+            if (cellInfo.isTokenized && cellInfo.tokenized) {
+                return cellInfo.tokenized;
+            }
+            return cellInfo.original;
+        });
+    });
     
     // Конвертировать данные в CSV
-    const csv = tokenizedData.map(row => {
+    const csv = exportData.map(row => {
         return row.map(cell => {
             const str = cell.toString();
             if (str.includes(',') || str.includes('"') || str.includes('\n')) {
@@ -303,13 +358,23 @@ function downloadCSV() {
 
 // Скачать XLSX
 function downloadXLSX() {
-    if (tokenizedData.length === 0) return;
+    if (tableData.length === 0) return;
+    
+    // Получить данные для экспорта (токенизированные значения)
+    const exportData = tableData.map(rowData => {
+        return rowData.map(cellInfo => {
+            if (cellInfo.isTokenized && cellInfo.tokenized) {
+                return cellInfo.tokenized;
+            }
+            return cellInfo.original;
+        });
+    });
     
     // Создать новую книгу
     const wb = XLSX.utils.book_new();
     
     // Конвертировать данные в рабочий лист
-    const ws = XLSX.utils.aoa_to_sheet(tokenizedData);
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
     
     // Добавить лист в книгу
     XLSX.utils.book_append_sheet(wb, ws, 'Tokenized');
