@@ -7,13 +7,57 @@ let reverseDictionary = new Map(); // token -> original
 let currentDictionary = new Map(); // для детокенизации
 let selectedColumns = new Set(); // выбранные столбцы для токенизации (жёлтые)
 let tokenizedColumns = new Set(); // токенизированные столбцы (зелёные)
-let viewMode = 'tokenized'; // 'tokenized', 'original', 'both'
+let viewMode = 'original'; // 'tokenized', 'original', 'both'
 let hasTokenizedData = false; // есть ли токенизированные данные
-let tokenizationStartRow = 1; // Строка, с которой начинается токенизация (1-based)
+let tokenizationStartRow = 1; // Первая строка, участвующая в токенизации (1-based)
+let tokenizationMarkerRow = 1; // Строка, напротив которой стоит маркер (1-based)
+let isMarkerEnabled = true; // Включен ли маркер исключения верхних строк
 let currentExportId = null; // ID для текущей сессии экспорта
 let tableExported = false; // Флаг экспорта таблицы
 let dictionaryExported = false; // Флаг экспорта словаря
-let anchorMarker = null; // Элемент маркера якоря токенизации
+let anchorControlPanel = null; // Панель управления маркером
+let markerOutsideClickHandler = null;
+
+// Пересчитать стартовую строку токенизации на основе маркера
+function recalculateTokenizationStartRow() {
+    if (!isMarkerEnabled) {
+        tokenizationStartRow = 1;
+        return;
+    }
+
+    const totalRows = tableData.length;
+    const safeTotal = Math.max(1, totalRows);
+    tokenizationMarkerRow = Math.max(1, Math.min(tokenizationMarkerRow, safeTotal));
+    tokenizationStartRow = Math.min(totalRows + 1, tokenizationMarkerRow + 1);
+}
+
+// Получить 0-based индекс стартовой строки
+function getTokenizationStartIndex() {
+    return Math.max(0, tokenizationStartRow - 1);
+}
+
+// Проверить, исключена ли строка из токенизации (выше или на маркере)
+function isRowExcludedFromTokenization(rowIndex) {
+    return rowIndex < getTokenizationStartIndex();
+}
+
+// Обновить доступность режимов отображения
+function updateViewModeAvailability() {
+    const select = document.getElementById('viewModeSelect');
+    if (!select) return;
+
+    const tokenizedOption = select.querySelector('option[value="tokenized"]');
+    const bothOption = select.querySelector('option[value="both"]');
+    const hasTokens = hasTokenizedData && tokenizedColumns.size > 0;
+
+    if (tokenizedOption) tokenizedOption.disabled = !hasTokens;
+    if (bothOption) bothOption.disabled = !hasTokens;
+
+    if (!hasTokens && (viewMode === 'tokenized' || viewMode === 'both')) {
+        viewMode = 'original';
+        select.value = 'original';
+    }
+}
 
 // Загрузка файла
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -45,8 +89,19 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
             tokenizedColumns.clear();
             tableData = [];
             hasTokenizedData = false;
+            viewMode = 'original';
+            tokenizationMarkerRow = 1;
+            isMarkerEnabled = true;
+            tokenizationStartRow = 1;
+            hideAnchorControlPanel();
+            const viewModeSelectInner = document.getElementById('viewModeSelect');
+            if (viewModeSelectInner) {
+                viewModeSelectInner.value = 'original';
+            }
+            updateViewModeAvailability();
             document.getElementById('tableSection').style.display = 'none';
             document.getElementById('viewModeWrapper').style.display = 'none';
+            document.getElementById('fontSizeWrapper').style.display = 'none';
             document.getElementById('downloadSection').style.display = 'none';
         };
         
@@ -91,14 +146,21 @@ function recognizeData() {
     selectedColumns.clear();
     tokenizedColumns.clear();
     hasTokenizedData = false;
-    viewMode = 'tokenized';
-    tokenizationStartRow = 1;
+    viewMode = 'original';
+    tokenizationMarkerRow = 1;
+    isMarkerEnabled = true;
+    recalculateTokenizationStartRow();
     currentExportId = null;
     tableExported = false;
     dictionaryExported = false;
-    document.getElementById('viewModeWrapper').style.display = 'none';
-    document.getElementById('fontSizeWrapper').style.display = 'none';
+    const viewModeSelect = document.getElementById('viewModeSelect');
+    if (viewModeSelect) {
+        viewModeSelect.value = 'original';
+    }
+    document.getElementById('viewModeWrapper').style.display = 'flex';
+    document.getElementById('fontSizeWrapper').style.display = 'flex';
     document.getElementById('downloadSection').style.display = 'none';
+    updateViewModeAvailability();
     
     // Построить таблицу
     displayTable();
@@ -154,12 +216,16 @@ function performClear() {
     selectedColumns.clear();
     tokenizedColumns.clear();
     hasTokenizedData = false;
-    viewMode = 'tokenized';
+    viewMode = 'original';
     tokenizationStartRow = 1;
+    tokenizationMarkerRow = 1;
+    isMarkerEnabled = true;
     currentExportId = null;
     tableExported = false;
     dictionaryExported = false;
-    anchorMarker = null;
+    hideAnchorControlPanel();
+    anchorControlPanel = null;
+    updateViewModeAvailability();
     
     // Очистить UI
     document.getElementById('fileInput').value = '';
@@ -195,6 +261,9 @@ function displayTable() {
     table.innerHTML = '';
     
     if (tableData.length === 0) return;
+
+    // Пересчитать стартовую строку на случай изменения числа строк
+    recalculateTokenizationStartRow();
     
     // Обновить синхронизацию скролла и якорь после отрисовки
     setTimeout(() => {
@@ -205,6 +274,7 @@ function displayTable() {
     const maxCols = tableData[0].length;
     
     // Создать заголовки с чекбоксами
+    const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
     for (let i = 0; i < maxCols; i++) {
         const th = document.createElement('th');
@@ -232,25 +302,30 @@ function displayTable() {
         th.appendChild(labelText);
         headerRow.appendChild(th);
     }
-    table.appendChild(headerRow);
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
     
     // Создать строки данных
+    const tbody = document.createElement('tbody');
     tableData.forEach((rowData, rowIndex) => {
         const tr = document.createElement('tr');
+        const isExcludedRow = isRowExcludedFromTokenization(rowIndex);
         for (let i = 0; i < maxCols; i++) {
             const td = document.createElement('td');
             const cellInfo = rowData[i];
             
             // Определить класс цвета столбца
             let cellClasses = [];
-            if (tokenizedColumns.has(i)) {
-                cellClasses.push('column-tokenized');
-            } else if (selectedColumns.has(i)) {
-                cellClasses.push('column-selected');
+            if (!isExcludedRow) {
+                if (tokenizedColumns.has(i)) {
+                    cellClasses.push('column-tokenized');
+                } else if (selectedColumns.has(i)) {
+                    cellClasses.push('column-selected');
+                }
             }
             
             // Отобразить значение в зависимости от режима просмотра
-            if (!cellInfo.isTokenized || !hasTokenizedData) {
+            if (isExcludedRow || !cellInfo.isTokenized || !hasTokenizedData) {
                 // Нетокенизированная ячейка или нет токенизированных данных
                 td.textContent = cellInfo.original;
                 td.title = '';
@@ -287,8 +362,9 @@ function displayTable() {
             
             tr.appendChild(td);
         }
-        table.appendChild(tr);
+        tbody.appendChild(tr);
     });
+    table.appendChild(tbody);
 }
 
 // Переключение выбора столбца
@@ -348,15 +424,20 @@ function untokenizeColumn(colIndex) {
     // Убрать столбец из токенизированных
     tokenizedColumns.delete(colIndex);
     
-    // Если больше нет токенизированных данных, скрыть элементы управления
+    // Если больше нет токенизированных данных, скорректировать состояние
     if (tokenizedColumns.size === 0) {
         hasTokenizedData = false;
-        document.getElementById('viewModeWrapper').style.display = 'none';
-        document.getElementById('fontSizeWrapper').style.display = 'none';
         document.getElementById('downloadSection').style.display = 'none';
         // Сбросить ID экспорта при отмене всех токенизаций
         currentExportId = null;
+        viewMode = 'original';
+        const select = document.getElementById('viewModeSelect');
+        if (select) {
+            select.value = 'original';
+        }
     }
+
+    updateViewModeAvailability();
 }
 
 // Настройка визуального якоря токенизации
@@ -367,112 +448,162 @@ function setupTokenizationAnchor() {
     
     if (!gutter || !table || tableData.length === 0) return;
     
-    // Очистить предыдущий якорь и обработчики
-    gutter.innerHTML = '';
-    gutter.onclick = null;
+    const dataRows = table.querySelectorAll('tbody tr');
+    if (dataRows.length === 0) return;
     
-    // Вычислить высоту строки таблицы
-    const rows = table.querySelectorAll('tbody tr');
-    if (rows.length === 0) return;
-    
-    const firstRow = rows[0];
-    const rowHeight = firstRow.offsetHeight || 30; // Fallback если не удалось определить
+    const panelWasOpen = anchorControlPanel && anchorControlPanel.style.display === 'flex';
     const headerHeight = table.querySelector('thead')?.offsetHeight || 0;
-    
-    // Установить высоту gutter равной высоте таблицы (включая заголовок)
-    const tableHeight = table.offsetHeight;
-    gutter.style.height = tableHeight + 'px';
+    gutter.innerHTML = '';
+    gutter.style.paddingTop = headerHeight + 'px';
+    gutter.style.height = table.offsetHeight + 'px';
     gutter.style.maxHeight = tableContainer.offsetHeight + 'px';
     gutter.style.overflowY = 'auto';
     
-    // Создать маркер якоря
-    anchorMarker = document.createElement('div');
-    anchorMarker.className = 'table-anchor-marker';
+    const rowsWrapper = document.createElement('div');
+    rowsWrapper.className = 'table-anchor-rows';
     
-    // Вычислить позицию маркера (1-based -> 0-based)
-    const markerTop = headerHeight + (tokenizationStartRow - 1) * rowHeight;
-    anchorMarker.style.top = markerTop + 'px';
-    
-    gutter.appendChild(anchorMarker);
-    
-    // Обработчик клика по gutter для перемещения якоря
-    let isDragging = false;
-    
-    gutter.onclick = function(e) {
-        if (isDragging || e.target === anchorMarker) return;
+    dataRows.forEach((rowEl, index) => {
+        const anchorRow = document.createElement('div');
+        anchorRow.className = 'table-anchor-row';
+        anchorRow.style.height = `${rowEl.offsetHeight || 30}px`;
         
-        const rect = gutter.getBoundingClientRect();
-        const clickY = e.clientY - rect.top + gutter.scrollTop;
-        const relativeY = clickY - headerHeight;
-        
-        // Вычислить номер строки (1-based)
-        const clickedRow = Math.max(1, Math.floor(relativeY / rowHeight) + 1);
-        const maxRow = tableData.length;
-        
-        if (clickedRow <= maxRow) {
-            tokenizationStartRow = clickedRow;
-            updateAnchorPosition();
+        const dot = document.createElement('div');
+        dot.className = 'anchor-dot';
+        if (tokenizationMarkerRow === index + 1) {
+            dot.classList.add('active');
         }
-    };
-    
-    // Обработчик перетаскивания
-    anchorMarker.addEventListener('mousedown', function(e) {
-        isDragging = true;
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const startY = e.clientY;
-        const startScrollTop = gutter.scrollTop;
-        const startRow = tokenizationStartRow;
-        
-        function onMouseMove(e) {
-            const deltaY = e.clientY - startY;
-            const rowDelta = Math.round(deltaY / rowHeight);
-            const newRow = Math.max(1, Math.min(tableData.length, startRow + rowDelta));
-            
-            if (newRow !== tokenizationStartRow) {
-                tokenizationStartRow = newRow;
-                updateAnchorPosition();
-            }
+        if (!isMarkerEnabled) {
+            dot.classList.add('disabled');
         }
+        anchorRow.appendChild(dot);
         
-        function onMouseUp() {
-            isDragging = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
-        }
+        anchorRow.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setMarkerRow(index + 1, true);
+        });
         
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        rowsWrapper.appendChild(anchorRow);
     });
     
-    // Синхронизировать скролл gutter с таблицей
-    function syncGutterScroll() {
-        gutter.scrollTop = tableContainer.scrollTop;
+    gutter.appendChild(rowsWrapper);
+    
+    if (!anchorControlPanel) {
+        anchorControlPanel = document.createElement('div');
+        anchorControlPanel.className = 'anchor-control-panel';
+        anchorControlPanel.innerHTML = `
+            <button class="anchor-toggle-btn"></button>
+            <button class="anchor-move-btn">Переместить вниз</button>
+        `;
     }
     
-    tableContainer.addEventListener('scroll', syncGutterScroll);
-    gutter.addEventListener('scroll', function() {
-        tableContainer.scrollTop = gutter.scrollTop;
-    });
+    anchorControlPanel.style.display = 'none';
+    gutter.appendChild(anchorControlPanel);
     
-    syncGutterScroll();
+    // Синхронизация скролла gutter с таблицей
+    tableContainer.onscroll = function() {
+        gutter.scrollTop = tableContainer.scrollTop;
+    };
+    
+    gutter.onscroll = function() {
+        tableContainer.scrollTop = gutter.scrollTop;
+    };
+    
+    gutter.scrollTop = tableContainer.scrollTop;
+
+    if (panelWasOpen) {
+        focusAnchorControlsOnMarker();
+    }
 }
 
-// Обновить позицию якоря
-function updateAnchorPosition() {
-    if (!anchorMarker) return;
+function hideAnchorControlPanel() {
+    if (anchorControlPanel) {
+        anchorControlPanel.style.display = 'none';
+    }
+    if (markerOutsideClickHandler) {
+        document.removeEventListener('click', markerOutsideClickHandler);
+        markerOutsideClickHandler = null;
+    }
+}
+
+function attachAnchorOutsideClickHandler() {
+    if (markerOutsideClickHandler) return;
+    markerOutsideClickHandler = function(e) {
+        const gutter = document.getElementById('tableAnchorGutter');
+        if (gutter && !gutter.contains(e.target)) {
+            hideAnchorControlPanel();
+        }
+    };
+    // Отложить регистрацию, чтобы не срабатывало на текущий клик
+    setTimeout(() => document.addEventListener('click', markerOutsideClickHandler), 0);
+}
+
+function showAnchorControlPanel(targetRowElement) {
+    if (!anchorControlPanel || !targetRowElement) return;
     
-    const table = document.getElementById('dataTable');
-    const rows = table.querySelectorAll('tbody tr');
-    if (rows.length === 0) return;
+    const toggleBtn = anchorControlPanel.querySelector('.anchor-toggle-btn');
+    const moveBtn = anchorControlPanel.querySelector('.anchor-move-btn');
     
-    const firstRow = rows[0];
-    const rowHeight = firstRow.offsetHeight || 30;
-    const headerHeight = table.querySelector('thead')?.offsetHeight || 0;
+    toggleBtn.textContent = isMarkerEnabled ? 'Выключить маркер' : 'Включить маркер';
+    moveBtn.disabled = tokenizationMarkerRow >= tableData.length;
     
-    const markerTop = headerHeight + (tokenizationStartRow - 1) * rowHeight;
-    anchorMarker.style.top = markerTop + 'px';
+    toggleBtn.onclick = function(e) {
+        e.stopPropagation();
+        toggleMarkerEnabled();
+        focusAnchorControlsOnMarker();
+    };
+    
+    moveBtn.onclick = function(e) {
+        e.stopPropagation();
+        moveMarkerDown();
+    };
+    
+    anchorControlPanel.style.display = 'flex';
+    anchorControlPanel.style.top = `${targetRowElement.offsetTop}px`;
+    anchorControlPanel.style.left = '38px';
+    
+    attachAnchorOutsideClickHandler();
+}
+
+function focusAnchorControlsOnMarker() {
+    const gutter = document.getElementById('tableAnchorGutter');
+    if (!gutter) return;
+    const rows = gutter.querySelectorAll('.table-anchor-row');
+    const targetRow = rows[tokenizationMarkerRow - 1];
+    if (targetRow) {
+        showAnchorControlPanel(targetRow);
+    } else {
+        hideAnchorControlPanel();
+    }
+}
+
+function setMarkerRow(rowNumber, openControls = false) {
+    tokenizationMarkerRow = Math.max(1, Math.min(rowNumber, Math.max(1, tableData.length)));
+    recalculateTokenizationStartRow();
+    displayTable();
+    setupTokenizationAnchor();
+    if (openControls) {
+        focusAnchorControlsOnMarker();
+    } else {
+        hideAnchorControlPanel();
+    }
+}
+
+function toggleMarkerEnabled() {
+    isMarkerEnabled = !isMarkerEnabled;
+    recalculateTokenizationStartRow();
+    displayTable();
+    setupTokenizationAnchor();
+}
+
+function moveMarkerDown() {
+    if (tableData.length === 0) return;
+    if (tokenizationMarkerRow < tableData.length) {
+        tokenizationMarkerRow += 1;
+        recalculateTokenizationStartRow();
+        displayTable();
+        setupTokenizationAnchor();
+        focusAnchorControlsOnMarker();
+    }
 }
 
 // Генерация base64url токена
@@ -501,8 +632,11 @@ function tokenizeColumns() {
         alert('Выберите хотя бы один столбец для токенизации');
         return;
     }
+
+    recalculateTokenizationStartRow();
     
-    const startRow = Math.max(0, tokenizationStartRow - 1); // Конвертируем в 0-based индекс
+    const startRow = getTokenizationStartIndex(); // 0-based индекс первой токенизируемой строки
+    let tokenCreated = false;
     
     // Токенизировать только выбранные (жёлтые) столбцы
     selectedColumns.forEach(colIndex => {
@@ -534,6 +668,7 @@ function tokenizeColumns() {
             }
             
             cellInfo.isTokenized = true;
+            tokenCreated = true;
         });
         
         // Переместить столбец из selectedColumns в tokenizedColumns
@@ -541,17 +676,14 @@ function tokenizeColumns() {
         selectedColumns.delete(colIndex);
     });
     
-    hasTokenizedData = true;
+    hasTokenizedData = hasTokenizedData || tokenCreated;
     
     // Сбросить ID экспорта при новой токенизации (новая сессия)
     currentExportId = null;
     
-    // Показать переключатель режимов после первой токенизации
-    if (document.getElementById('viewModeWrapper').style.display === 'none') {
-        document.getElementById('viewModeWrapper').style.display = 'block';
-        document.getElementById('fontSizeWrapper').style.display = 'block';
-        document.getElementById('downloadSection').style.display = 'block';
-    }
+    // Показать экспорт
+    document.getElementById('downloadSection').style.display = 'block';
+    updateViewModeAvailability();
     
     // Обновить отображение таблицы
     displayTable();
@@ -648,6 +780,9 @@ function updateTableFontSize() {
     allCells.forEach(cell => {
         cell.style.fontSize = fontSize;
     });
+
+    // Обновить высоту маркеров после изменения шрифта
+    setupTokenizationAnchor();
 }
 
 // Генерация ID для экспорта
@@ -679,11 +814,12 @@ function formatDateTimeForFilename() {
 function downloadCSV() {
     if (tableData.length === 0) return;
     
+    recalculateTokenizationStartRow();
     const exportId = generateExportId();
     const dateTime = formatDateTimeForFilename();
     
     // Получить данные для экспорта (токенизированные значения)
-    const startRow = Math.max(0, tokenizationStartRow - 1);
+    const startRow = getTokenizationStartIndex();
     const exportData = tableData.map((rowData, rowIndex) => {
         // Для строк до стартовой - использовать исходные значения
         if (rowIndex < startRow) {
@@ -727,11 +863,12 @@ function downloadCSV() {
 function downloadXLSX() {
     if (tableData.length === 0) return;
     
+    recalculateTokenizationStartRow();
     const exportId = generateExportId();
     const dateTime = formatDateTimeForFilename();
     
     // Получить данные для экспорта (токенизированные значения)
-    const startRow = Math.max(0, tokenizationStartRow - 1);
+    const startRow = getTokenizationStartIndex();
     const exportData = tableData.map((rowData, rowIndex) => {
         // Для строк до стартовой - использовать исходные значения
         if (rowIndex < startRow) {
@@ -764,11 +901,12 @@ function downloadXLSX() {
 
 // Скачать JSON-словарь
 function downloadJSON() {
+    recalculateTokenizationStartRow();
     const exportId = generateExportId();
     const dateTime = formatDateTimeForFilename();
     
     // Собрать только те токены, которые используются в экспортируемых данных
-    const startRow = Math.max(0, tokenizationStartRow - 1);
+    const startRow = getTokenizationStartIndex();
     const usedTokens = new Set();
     
     tableData.forEach((rowData, rowIndex) => {
@@ -809,10 +947,10 @@ function togglePromptSection(button) {
     
     if (section.style.display === 'none') {
         section.style.display = 'block';
-        button.textContent = '▼';
+        button.textContent = 'Свернуть';
     } else {
         section.style.display = 'none';
-        button.textContent = '▶';
+        button.textContent = 'Развернуть';
     }
 }
 
@@ -1040,4 +1178,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    updateViewModeAvailability();
 });

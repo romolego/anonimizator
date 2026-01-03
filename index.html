@@ -39,7 +39,7 @@
                     <button onclick="tokenizeColumns()">Токенизировать выбранные столбцы</button>
                 </div>
                 <div class="table-controls-right">
-                    <div id="fontSizeWrapper" style="display: none;" class="view-mode-wrapper">
+                    <div id="fontSizeWrapper" class="view-mode-wrapper">
                         <label for="fontSizeSelect">Размер текста в таблице:</label>
                         <select id="fontSizeSelect" onchange="updateTableFontSize()">
                             <option value="10px">10px</option>
@@ -49,12 +49,12 @@
                             <option value="18px">18px</option>
                         </select>
                     </div>
-                    <div id="viewModeWrapper" style="display: none;" class="view-mode-wrapper">
+                    <div id="viewModeWrapper" class="view-mode-wrapper">
                         <label for="viewModeSelect">Режим отображения:</label>
                         <select id="viewModeSelect" onchange="updateTableView()">
-                            <option value="tokenized">Показать токенизированные</option>
-                            <option value="original">Показать исходные</option>
-                            <option value="both">Показать оба</option>
+                            <option value="original" selected>Показать исходные</option>
+                            <option value="tokenized" disabled>Показать токенизированные</option>
+                            <option value="both" disabled>Показать оба</option>
                         </select>
                     </div>
                 </div>
@@ -79,10 +79,8 @@
                 <div class="prompt-subsection">
                     <div class="prompt-subsection-header">
                         <h4>Промпт для нейросети</h4>
-                        <div class="prompt-header-buttons">
-                            <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
-                            <button class="prompt-toggle-button" onclick="togglePromptSection(this)">▶</button>
-                        </div>
+                        <button class="prompt-toggle-button" onclick="togglePromptSection(this)">Развернуть</button>
+                        <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
                     </div>
                     <div class="prompt-section" id="promptSection" style="display: none;">
                         <div class="prompt-card">
@@ -108,7 +106,6 @@
             <h2>Детокенизация</h2>
             
             <div class="json-import-section">
-                <hr class="section-divider">
                 <div class="json-import-control-top">
                     <label for="jsonInput">Импорт JSON-словаря:</label>
                     <input type="file" id="jsonInput" accept=".json" />
