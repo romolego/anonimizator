@@ -10,6 +10,25 @@
     <div class="container">
         <h1>Псевдоанонимизация Excel-таблиц</h1>
         
+        <!-- Инструкция -->
+        <div class="section collapsible" id="instructionSection">
+            <div class="collapsible-header">
+                <h2>Инструкция</h2>
+                <button class="collapse-toggle" onclick="toggleCollapse('instructionBody', this)">Развернуть</button>
+            </div>
+            <div class="collapsible-body" id="instructionBody" style="display: none;">
+                <div class="collapsible-content">
+                    <ul class="instruction-list">
+                        <li>Загрузите XLSX, выберите лист и нажмите «Распознать данные».</li>
+                        <li>Отметьте столбцы для токенизации, при необходимости переставьте маркер строки слева и нажмите «Токенизировать выбранные столбцы».</li>
+                        <li>Меняйте режим отображения для проверки исходных значений и токенов.</li>
+                        <li>Перед очисткой скачайте таблицу и JSON-словарь (или воспользуйтесь «Скачать комплект» в блоке экспорта).</li>
+                        <li>Для детокенизации импортируйте JSON-словарь, вставьте ответ модели в «сырой» блок — результат появится ниже.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
         <!-- Загрузка файла и управление -->
         <div class="section">
             <h2>Загрузка файла</h2>
@@ -75,22 +94,24 @@
                     <button class="download-button-data" onclick="downloadCSV()">Скачать CSV</button>
                     <button class="download-button-data" onclick="downloadXLSX()">Скачать XLSX</button>
                     <button class="download-button-dict" onclick="downloadJSON()">Скачать JSON-словарь</button>
+                <button class="download-button-dict download-button-bundle" onclick="downloadBundle()">Скачать комплект</button>
                 </div>
             </div>
         </div>
 
         <!-- Промпт для нейросети -->
         <div class="section" id="promptStandaloneSection">
-            <h2>Промпт для нейросети</h2>
-            <div class="prompt-subsection">
-                <div class="prompt-subsection-header">
-                    <h4>Текст промпта</h4>
+            <div class="collapsible-header prompt-header">
+                <h2>Промпт для нейросети</h2>
+                <div class="collapsible-actions">
                     <button class="prompt-toggle-button" onclick="togglePromptSection(this)">Развернуть</button>
                     <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
+                    <span class="help-icon" data-tooltip="Вставьте текст в конец запроса в режиме «Промпт для нейросети», чтобы модель не меняла токены [[...]]: не править, не разрывать, не расшифровывать.">?</span>
                 </div>
-                <div class="prompt-section" id="promptSection" style="display: none;">
-                    <div class="prompt-card">
-                        <div class="prompt-text" id="promptTextarea">В прилагаемой таблице встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
+            </div>
+            <div class="prompt-section" id="promptSection" style="display: none;">
+                <div class="prompt-card">
+                    <div class="prompt-text" id="promptTextarea">В прилагаемой таблице встречаются токены вида [[...]]. Это псевдоанонимизированные значения: они заменяют исходные данные и расшифровываются только по отдельному JSON-словарю соответствий.
 Жёсткое правило: не изменяй токены [[...]] ни при каких условиях.
 
 (1) Токен — это подстрока от [[ до ]] целиком. Запрещено разрывать токен переносом строки или вставлять внутрь токена пробелы/переносы.
@@ -101,7 +122,6 @@
 (6) Если нужно сослаться на значение — используй токен ровно как он дан, целиком, включая [[ и ]]. Если токен встречается несколько раз — считай, что это одно и то же значение.
 (7) Если в ответе используются токены — выводи ответ простым текстом (без Markdown-таблиц, код-блоков и ссылок), чтобы не исказить токены.
 (8) Перед отправкой ответа проверь, что каждый токен в твоём ответе совпадает с токеном из входных данных символ-в-символ.</div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -143,9 +163,10 @@
             <div class="detokenized-result">
                 <div class="result-header">
                     <h3>Ответ (детокенизированный)</h3>
+                    <button class="prompt-toggle-button result-toggle-button" onclick="toggleDetokenizedResult(this)">Развернуть</button>
                     <button class="copy-button copy-button-result" onclick="copyDetokenizedText(this)">Копировать</button>
                 </div>
-                <div id="detokenizedText" class="result-text"></div>
+                <div id="detokenizedText" class="result-text result-text-collapsed"></div>
             </div>
         </div>
     </div>

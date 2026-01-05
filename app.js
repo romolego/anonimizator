@@ -38,9 +38,11 @@ const AppState = {
     markerDragActivated: false,
     markerDragCandidateRow: 1,
     markerDragStart: { x: 0, y: 0 },
+    markerDragHighlightedRow: null,
     
     // Экспорт
     currentExportId: null,
+    exportDateTime: null,
     tableExported: false,
     dictionaryExported: false
 };
@@ -106,6 +108,34 @@ function formatDateTimeForFilename() {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+/**
+ * Получить или зафиксировать метку времени экспорта
+ */
+function getExportTimestamp() {
+    if (!AppState.exportDateTime) {
+        AppState.exportDateTime = formatDateTimeForFilename();
+    }
+    return AppState.exportDateTime;
+}
+
+/**
+ * Сбросить параметры экспорта
+ */
+function resetExportContext() {
+    AppState.currentExportId = null;
+    AppState.exportDateTime = null;
+}
+
+/**
+ * Единый контекст для файлов экспорта
+ */
+function getExportContext() {
+    return {
+        exportId: generateExportId(),
+        dateTime: getExportTimestamp()
+    };
 }
 
 /**
@@ -220,7 +250,7 @@ function tokenizeColumns() {
     const hasTokensNow = AppState.hasTokenizedData && AppState.tokenizedColumns.size > 0;
     
     // Сброс ID экспорта при новой токенизации
-    AppState.currentExportId = null;
+    resetExportContext();
     
     // Показать секцию экспорта
     const downloadSection = getElement('downloadSection');
@@ -297,7 +327,7 @@ function untokenizeColumn(colIndex) {
         if (downloadSection) {
             downloadSection.style.display = 'none';
         }
-        AppState.currentExportId = null;
+        resetExportContext();
         AppState.viewMode = 'original';
         const select = getElement('viewModeSelect');
         if (select) {
@@ -355,8 +385,7 @@ function prepareExportData() {
 function downloadCSV() {
     if (AppState.tableData.length === 0) return;
     
-    const exportId = generateExportId();
-    const dateTime = formatDateTimeForFilename();
+    const { exportId, dateTime } = getExportContext();
     const exportData = prepareExportData();
     
     // Конвертация в CSV
@@ -384,8 +413,7 @@ function downloadCSV() {
 function downloadXLSX() {
     if (AppState.tableData.length === 0) return;
     
-    const exportId = generateExportId();
-    const dateTime = formatDateTimeForFilename();
+    const { exportId, dateTime } = getExportContext();
     const exportData = prepareExportData();
     
     const wb = XLSX.utils.book_new();
@@ -401,8 +429,7 @@ function downloadXLSX() {
  */
 function downloadJSON() {
     recalculateTokenizationStartRow();
-    const exportId = generateExportId();
-    const dateTime = formatDateTimeForFilename();
+    const { exportId, dateTime } = getExportContext();
     
     // Сбор только используемых токенов
     const startRow = getTokenizationStartIndex();
@@ -430,6 +457,67 @@ function downloadJSON() {
     const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
     downloadBlob(blob, `${exportId}_Словарь_${dateTime}.json`);
     
+    AppState.dictionaryExported = true;
+}
+
+/**
+ * Скачать комплект файлов (CSV + XLSX + JSON-словарь)
+ */
+function downloadBundle() {
+    if (AppState.tableData.length === 0) return;
+    
+    recalculateTokenizationStartRow();
+    const { exportId, dateTime } = getExportContext();
+    const exportData = prepareExportData();
+
+    // CSV
+    const csv = exportData.map(row => {
+        return row.map(cell => {
+            const str = String(cell);
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                return '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+        }).join(',');
+    }).join('\n');
+
+    const bom = '\ufeff';
+    const csvBlob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    downloadBlob(csvBlob, `${exportId}_Таблица_${dateTime}.csv`);
+
+    // XLSX
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
+    XLSX.utils.book_append_sheet(wb, ws, 'Tokenized');
+    XLSX.writeFile(wb, `${exportId}_Таблица_${dateTime}.xlsx`);
+
+    // JSON-словарь
+    const startRow = getTokenizationStartIndex();
+    const usedTokens = new Set();
+
+    AppState.tableData.forEach((rowData, rowIndex) => {
+        if (rowIndex >= startRow) {
+            rowData.forEach(cellInfo => {
+                if (cellInfo.isTokenized && cellInfo.tokenized) {
+                    usedTokens.add(cellInfo.tokenized);
+                }
+            });
+        }
+    });
+
+    const dict = {};
+    usedTokens.forEach(token => {
+        const original = AppState.reverseDictionary.get(token);
+        if (original !== undefined) {
+            dict[token] = original;
+        }
+    });
+
+    const json = JSON.stringify(dict, null, 2);
+    const jsonBlob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+    downloadBlob(jsonBlob, `${exportId}_Словарь_${dateTime}.json`);
+
+    AppState.tableExported = true;
     AppState.dictionaryExported = true;
 }
 
@@ -902,12 +990,23 @@ function clearMarkerDragHighlight() {
     const gutter = getElement('tableAnchorGutter');
     const table = getElement('dataTable');
     
-    if (gutter) {
-        gutter.querySelectorAll('.table-anchor-row.drag-hover').forEach(el => el.classList.remove('drag-hover'));
+    const gutterRows = gutter ? gutter.querySelectorAll('.table-anchor-row') : [];
+    const tableRows = table ? table.querySelectorAll('tbody tr') : [];
+
+    if (AppState.markerDragHighlightedRow !== null) {
+        const idx = AppState.markerDragHighlightedRow - 1;
+        if (gutterRows[idx]) gutterRows[idx].classList.remove('drag-hover');
+        if (tableRows[idx]) tableRows[idx].classList.remove('drag-hover');
+    } else {
+        if (gutter) {
+            gutter.querySelectorAll('.table-anchor-row.drag-hover').forEach(el => el.classList.remove('drag-hover'));
+        }
+        if (table) {
+            table.querySelectorAll('tbody tr.drag-hover').forEach(el => el.classList.remove('drag-hover'));
+        }
     }
-    if (table) {
-        table.querySelectorAll('tbody tr.drag-hover').forEach(el => el.classList.remove('drag-hover'));
-    }
+
+    AppState.markerDragHighlightedRow = null;
     clearMarkerGhost();
 }
 
@@ -917,10 +1016,20 @@ function clearMarkerDragHighlight() {
 function applyMarkerDragHighlight(rowNumber) {
     const gutter = getElement('tableAnchorGutter');
     const table = getElement('dataTable');
-    clearMarkerDragHighlight();
+    if (!gutter || !table) return;
 
-    const gutterRows = gutter ? gutter.querySelectorAll('.table-anchor-row') : [];
-    const tableRows = table ? table.querySelectorAll('tbody tr') : [];
+    if (AppState.markerDragHighlightedRow === rowNumber) {
+        return;
+    }
+
+    const gutterRows = gutter.querySelectorAll('.table-anchor-row');
+    const tableRows = table.querySelectorAll('tbody tr');
+
+    if (AppState.markerDragHighlightedRow !== null) {
+        const prevIdx = AppState.markerDragHighlightedRow - 1;
+        if (gutterRows[prevIdx]) gutterRows[prevIdx].classList.remove('drag-hover');
+        if (tableRows[prevIdx]) tableRows[prevIdx].classList.remove('drag-hover');
+    }
 
     if (gutterRows[rowNumber - 1]) {
         gutterRows[rowNumber - 1].classList.add('drag-hover');
@@ -930,6 +1039,7 @@ function applyMarkerDragHighlight(rowNumber) {
     }
 
     showMarkerGhost(rowNumber);
+    AppState.markerDragHighlightedRow = rowNumber;
 }
 
 /**
@@ -1207,7 +1317,7 @@ function performClear() {
     AppState.tokenizationStartRow = 1;
     AppState.tokenizationMarkerRow = 1;
     AppState.isMarkerEnabled = true;
-    AppState.currentExportId = null;
+    resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
     
@@ -1263,19 +1373,23 @@ function performClear() {
 }
 
 /**
+ * Универсальный переключатель секций (аккордеон)
+ */
+function toggleCollapse(sectionId, button, collapsedText = 'Развернуть', expandedText = 'Свернуть') {
+    const section = getElement(sectionId);
+    if (!section || !button) return;
+
+    const isHidden = section.style.display === 'none' || section.style.display === '';
+    section.style.display = isHidden ? 'block' : 'none';
+    button.textContent = isHidden ? expandedText : collapsedText;
+    button.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+}
+
+/**
  * Переключение секции промпта
  */
 function togglePromptSection(button) {
-    const section = getElement('promptSection');
-    if (!section) return;
-    
-    if (section.style.display === 'none') {
-        section.style.display = 'block';
-        button.textContent = 'Свернуть';
-    } else {
-        section.style.display = 'none';
-        button.textContent = 'Развернуть';
-    }
+    toggleCollapse('promptSection', button);
 }
 
 /**
@@ -1298,6 +1412,20 @@ function copyDetokenizedText(button) {
     
     const text = container.textContent || container.innerText;
     copyToClipboard(text, button);
+}
+
+/**
+ * Переключение сворачивания детокенизированного ответа
+ */
+function toggleDetokenizedResult(button) {
+    const container = getElement('detokenizedText');
+    if (!container || !button) return;
+
+    const isCollapsed = container.classList.contains('result-text-collapsed');
+    container.classList.toggle('result-text-collapsed', !isCollapsed);
+    container.classList.toggle('result-text-expanded', isCollapsed);
+    button.textContent = isCollapsed ? 'Свернуть' : 'Развернуть';
+    button.setAttribute('aria-expanded', isCollapsed ? 'true' : 'false');
 }
 
 /**
@@ -1396,7 +1524,7 @@ function recognizeData() {
     AppState.tokenizationMarkerRow = 1;
     AppState.isMarkerEnabled = true;
     recalculateTokenizationStartRow();
-    AppState.currentExportId = null;
+    resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
     
@@ -1488,6 +1616,9 @@ function handleSheetChange() {
     AppState.tokenizationMarkerRow = 1;
     AppState.isMarkerEnabled = true;
     AppState.tokenizationStartRow = 1;
+    resetExportContext();
+    AppState.tableExported = false;
+    AppState.dictionaryExported = false;
     
     const viewModeSelect = getElement('viewModeSelect');
     if (viewModeSelect) {
