@@ -1,0 +1,6 @@
+# Ignore local-only content
+/.cursor/
+/docs/
+/tools/
+/\!structure.txt
+/\!структура папок.bat
