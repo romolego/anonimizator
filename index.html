@@ -37,7 +37,7 @@
                     <label for="fileInput">Выбор файла XLSX:</label>
                     <input type="file" id="fileInput" accept=".xlsx,.xls" />
                 </div>
-                <div class="file-control-item" id="sheetSelectionWrapper">
+                <div class="file-control-item" id="sheetSelectionWrapper" style="display: none;">
                     <label for="sheetSelect">Лист:</label>
                     <select id="sheetSelect"></select>
                 </div>
@@ -94,7 +94,7 @@
                     <button class="download-button-data" onclick="downloadCSV()">Скачать CSV</button>
                     <button class="download-button-data" onclick="downloadXLSX()">Скачать XLSX</button>
                     <button class="download-button-dict" onclick="downloadJSON()">Скачать JSON-словарь</button>
-                <button class="download-button-dict download-button-bundle" onclick="downloadBundle()">Скачать комплект</button>
+                    <button class="download-button-zip" onclick="downloadBundleZip()">Скачать комплект в ZIP</button>
                 </div>
             </div>
         </div>
@@ -103,7 +103,7 @@
         <div class="section" id="promptStandaloneSection">
             <div class="collapsible-header prompt-header">
                 <h2>Промпт для нейросети</h2>
-                <div class="collapsible-actions">
+                <div class="collapsible-actions prompt-actions-inline">
                     <button class="prompt-toggle-button" onclick="togglePromptSection(this)">Развернуть</button>
                     <button class="copy-button copy-button-prompt" onclick="copyPromptText(this)">Копировать</button>
                     <span class="help-icon" data-tooltip="Вставьте текст в конец запроса в режиме «Промпт для нейросети», чтобы модель не меняла токены [[...]]: не править, не разрывать, не расшифровывать.">?</span>
@@ -142,7 +142,10 @@
             <div class="detokenization-layout">
                 <div class="detokenization-left">
                     <label for="responseTextarea">Ответ нейросети (сырой):</label>
-                    <textarea id="responseTextarea" placeholder="Вставьте текст с токенами [[...]]"></textarea>
+                    <div class="textarea-wrapper">
+                        <pre class="textarea-highlight" id="responseHighlight" aria-hidden="true"></pre>
+                        <textarea id="responseTextarea" placeholder="Вставьте текст с токенами [[...]]"></textarea>
+                    </div>
                 </div>
                 
                 <div class="detokenization-center">
@@ -153,7 +156,19 @@
                 </div>
                 
                 <div class="detokenization-right">
-                    <h4>Найденные токены</h4>
+                    <div class="tokens-header">
+                        <h4>Найденные токены</h4>
+                        <div class="token-filters">
+                            <label class="token-filter-checkbox token-filter-found" title="Показать распознанные">
+                                <input type="checkbox" checked onchange="toggleTokenFilter('found', this)">
+                                <span></span>
+                            </label>
+                            <label class="token-filter-checkbox token-filter-notfound" title="Показать нераспознанные">
+                                <input type="checkbox" checked onchange="toggleTokenFilter('notFound', this)">
+                                <span></span>
+                            </label>
+                        </div>
+                    </div>
                     <div class="tokens-list-container">
                         <div id="tokensList"></div>
                     </div>
@@ -188,6 +203,7 @@
     </div>
 
     <script src="xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

@@ -44,7 +44,13 @@ const AppState = {
     currentExportId: null,
     exportDateTime: null,
     tableExported: false,
-    dictionaryExported: false
+    dictionaryExported: false,
+
+    // Фильтры токенов
+    tokenFilters: {
+        found: true,
+        notFound: true
+    }
 };
 
 // Обработчики скролла (хранятся для корректного удаления)
@@ -461,10 +467,14 @@ function downloadJSON() {
 }
 
 /**
- * Скачать комплект файлов (CSV + XLSX + JSON-словарь)
+ * Скачать комплект файлов (CSV + XLSX + JSON-словарь) в ZIP
  */
-function downloadBundle() {
+async function downloadBundleZip() {
     if (AppState.tableData.length === 0) return;
+    if (typeof JSZip === 'undefined') {
+        alert('Не удалось загрузить библиотеку для формирования ZIP. Проверьте подключение к сети.');
+        return;
+    }
     
     recalculateTokenizationStartRow();
     const { exportId, dateTime } = getExportContext();
@@ -482,14 +492,13 @@ function downloadBundle() {
     }).join('\n');
 
     const bom = '\ufeff';
-    const csvBlob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-    downloadBlob(csvBlob, `${exportId}_Таблица_${dateTime}.csv`);
+    const csvContent = bom + csv;
 
-    // XLSX
+    // XLSX как массив байт
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(exportData);
     XLSX.utils.book_append_sheet(wb, ws, 'Tokenized');
-    XLSX.writeFile(wb, `${exportId}_Таблица_${dateTime}.xlsx`);
+    const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 
     // JSON-словарь
     const startRow = getTokenizationStartIndex();
@@ -513,9 +522,16 @@ function downloadBundle() {
         }
     });
 
-    const json = JSON.stringify(dict, null, 2);
-    const jsonBlob = new Blob([json], { type: 'application/json;charset=utf-8;' });
-    downloadBlob(jsonBlob, `${exportId}_Словарь_${dateTime}.json`);
+    const jsonContent = JSON.stringify(dict, null, 2);
+
+    // Формирование ZIP
+    const zip = new JSZip();
+    zip.file(`${exportId}_Таблица_${dateTime}.csv`, csvContent);
+    zip.file(`${exportId}_Таблица_${dateTime}.xlsx`, xlsxArray);
+    zip.file(`${exportId}_Словарь_${dateTime}.json`, jsonContent);
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(zipBlob, `${exportId}_Комплект_${dateTime}.zip`);
 
     AppState.tableExported = true;
     AppState.dictionaryExported = true;
@@ -562,7 +578,7 @@ function displayTable() {
         const th = document.createElement('th');
         
         // Класс цвета столбца
-        if (AppState.tokenizedColumns.has(i) && showTokensView) {
+        if (AppState.tokenizedColumns.has(i)) {
             th.className = 'column-tokenized';
         } else if (AppState.selectedColumns.has(i)) {
             th.className = 'column-selected';
@@ -595,12 +611,11 @@ function displayTable() {
             const cellInfo = rowData[i];
             
             const cellClasses = [];
-            const showTokenColor = showTokensView && !isExcludedRow;
-            const showSelectedColor = !isExcludedRow;
+            const showColors = !isExcludedRow;
 
-            if (showTokenColor && AppState.tokenizedColumns.has(i)) {
+            if (showColors && AppState.tokenizedColumns.has(i)) {
                 cellClasses.push('column-tokenized');
-            } else if (showSelectedColor && AppState.selectedColumns.has(i)) {
+            } else if (showColors && AppState.selectedColumns.has(i)) {
                 cellClasses.push('column-selected');
             }
             
@@ -1167,13 +1182,20 @@ function processDetokenization() {
         noTokensMsg.textContent = 'Токены не найдены';
         tokensListContainer.appendChild(noTokensMsg);
         detokenizedTextContainer.textContent = text;
+        renderResponseHighlight(text, []);
         return;
     }
     
     const tokensFragment = document.createDocumentFragment();
+    let renderedItems = 0;
     
     foundTokens.forEach((count, token) => {
         const isFound = AppState.currentDictionary.has(token);
+        const typeAllowed = isFound ? AppState.tokenFilters.found : AppState.tokenFilters.notFound;
+        if (!typeAllowed) {
+            return;
+        }
+
         const item = document.createElement('div');
         item.className = `token-item ${isFound ? 'found' : 'not-found'}`;
         
@@ -1208,12 +1230,22 @@ function processDetokenization() {
         item.appendChild(info);
         
         tokensFragment.appendChild(item);
+        renderedItems++;
     });
     
-    tokensListContainer.appendChild(tokensFragment);
+    if (renderedItems === 0) {
+        const filteredMsg = document.createElement('p');
+        filteredMsg.style.color = '#666';
+        filteredMsg.style.fontSize = '12px';
+        filteredMsg.textContent = 'Нет токенов для выбранных фильтров';
+        tokensListContainer.appendChild(filteredMsg);
+    } else {
+        tokensListContainer.appendChild(tokensFragment);
+    }
     
     // Детокенизированный текст с подсветкой замен
     const sortedPositions = [...tokenPositions].sort((a, b) => a.start - b.start);
+    renderResponseHighlight(text, sortedPositions);
     
     detokenizedTextContainer.innerHTML = '';
     const resultFragment = document.createDocumentFragment();
@@ -1320,6 +1352,7 @@ function performClear() {
     resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
+    AppState.tokenFilters = { found: true, notFound: true };
     
     clearMarkerGhost();
     updateViewModeAvailability();
@@ -1332,7 +1365,7 @@ function performClear() {
     if (sheetSelect) sheetSelect.innerHTML = '';
     
     const elements = {
-        sheetSelectionWrapper: { style: 'display', value: 'flex' },
+        sheetSelectionWrapper: { style: 'display', value: 'none' },
         clearButton: { style: 'display', value: 'none' },
         recognizeButton: { style: 'display', value: 'none' },
         tableSection: { style: 'display', value: 'none' },
@@ -1412,6 +1445,60 @@ function copyDetokenizedText(button) {
     
     const text = container.textContent || container.innerText;
     copyToClipboard(text, button);
+}
+
+/**
+ * Переключение фильтра токенов (найденные/ненайденные)
+ */
+function toggleTokenFilter(type, checkbox) {
+    if (!checkbox) return;
+    if (type === 'found') {
+        AppState.tokenFilters.found = checkbox.checked;
+    } else if (type === 'notFound') {
+        AppState.tokenFilters.notFound = checkbox.checked;
+    }
+    processDetokenization();
+}
+
+/**
+ * Отрисовка подсветки токенов в сыром ответе
+ */
+function renderResponseHighlight(text, tokenPositions) {
+    const highlightEl = getElement('responseHighlight');
+    const textarea = getElement('responseTextarea');
+    if (!highlightEl || !textarea) return;
+
+    const sorted = [...tokenPositions].sort((a, b) => a.start - b.start);
+    let lastIndex = 0;
+    let html = '';
+
+    sorted.forEach(pos => {
+        if (pos.start > lastIndex) {
+            html += escapeHtml(text.substring(lastIndex, pos.start));
+        }
+        const cls = pos.isFound ? 'token-highlight-found' : 'token-highlight-notfound';
+        html += `<span class="${cls}">${escapeHtml(text.substring(pos.start, pos.end))}</span>`;
+        lastIndex = pos.end;
+    });
+
+    if (lastIndex < text.length) {
+        html += escapeHtml(text.substring(lastIndex));
+    }
+
+    highlightEl.innerHTML = html || '&nbsp;';
+    highlightEl.scrollTop = textarea.scrollTop;
+    highlightEl.scrollLeft = textarea.scrollLeft;
+}
+
+/**
+ * Синхронизация скролла подсветки с textarea
+ */
+function syncResponseHighlightScroll() {
+    const highlightEl = getElement('responseHighlight');
+    const textarea = getElement('responseTextarea');
+    if (!highlightEl || !textarea) return;
+    highlightEl.scrollTop = textarea.scrollTop;
+    highlightEl.scrollLeft = textarea.scrollLeft;
 }
 
 /**
@@ -1527,6 +1614,7 @@ function recognizeData() {
     resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
+    AppState.tokenFilters = { found: true, notFound: true };
     
     const viewModeSelect = getElement('viewModeSelect');
     if (viewModeSelect) {
@@ -1619,6 +1707,7 @@ function handleSheetChange() {
     resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
+    AppState.tokenFilters = { found: true, notFound: true };
     
     const viewModeSelect = getElement('viewModeSelect');
     if (viewModeSelect) {
@@ -1711,6 +1800,7 @@ function initEventHandlers() {
     const responseTextarea = getElement('responseTextarea');
     if (responseTextarea) {
         responseTextarea.addEventListener('input', processDetokenization);
+        responseTextarea.addEventListener('scroll', syncResponseHighlightScroll);
     }
     
     // Делегированный обработчик для чекбоксов столбцов (избегаем повторного навешивания)
