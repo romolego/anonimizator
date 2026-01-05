@@ -234,6 +234,8 @@ function toggleMarkerEnabled() {
 
 /**
  * Токенизация выбранных столбцов
+ * Примечание: токенизируется ВЕСЬ столбец целиком, независимо от положения маркеров.
+ * Маркеры влияют только на отображение и экспорт данных.
  */
 function tokenizeColumns() {
     if (AppState.selectedColumns.size === 0) {
@@ -242,17 +244,13 @@ function tokenizeColumns() {
     }
 
     recalculateTokenizationRange();
-    const startRow = getTokenizationStartIndex();
-    const endRow = getTokenizationEndIndex();
     
     const hadTokensBefore = AppState.hasTokenizedData && AppState.tokenizedColumns.size > 0;
     let tokenCreated = false;
     
     AppState.selectedColumns.forEach(colIndex => {
+        // Токенизация ВСЕХ строк столбца, без учёта маркеров диапазона
         AppState.tableData.forEach((rowData, rowIndex) => {
-            if (rowIndex < startRow || rowIndex > endRow) {
-                return;
-            }
             const cellInfo = rowData[colIndex];
             if (!cellInfo) return;
             
