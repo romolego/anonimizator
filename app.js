@@ -635,42 +635,50 @@ function displayTable() {
 
 /**
  * Рендеринг содержимого ячейки (вынесено для читаемости)
+ * Логика подсказок:
+ * - Режим «Показать токенизированные» → показывает токен, hover показывает исходное
+ * - Режим «Показать исходные» → показывает исходное, hover показывает токен (для токенизированных ячеек)
+ * - Режим «Показать оба» → показывает оба значения, подсказка не нужна
  */
 function renderCellContent(td, cellInfo, isExcludedRow, cellClasses) {
-    const showTokensView = AppState.viewMode === 'tokenized' || AppState.viewMode === 'both';
+    const isTokenizedCell = cellInfo.isTokenized && cellInfo.tokenized && AppState.hasTokenizedData;
     
-    if (isExcludedRow || !cellInfo.isTokenized || !AppState.hasTokenizedData || !showTokensView) {
-        // Нетокенизированная ячейка
-                td.textContent = cellInfo.original;
-                td.title = '';
-            } else {
-                // Токенизированная ячейка
-        if (AppState.viewMode === 'tokenized') {
-                    td.textContent = cellInfo.tokenized;
-            td.title = cellInfo.original;
-                    cellClasses.push('cell-tooltip');
-        } else if (AppState.viewMode === 'original') {
-                    td.textContent = cellInfo.original;
-            td.title = cellInfo.tokenized;
-                    cellClasses.push('cell-tooltip');
-        } else if (AppState.viewMode === 'both') {
-                    const div = document.createElement('div');
-                    div.className = 'cell-both-view';
-            
-                    const origDiv = document.createElement('div');
-                    origDiv.className = 'cell-original-value';
-                    origDiv.textContent = cellInfo.original;
-            
-                    const tokenDiv = document.createElement('div');
-                    tokenDiv.className = 'cell-tokenized-value';
-                    tokenDiv.textContent = cellInfo.tokenized;
-            
-                    div.appendChild(origDiv);
-                    div.appendChild(tokenDiv);
-                    td.appendChild(div);
-                    td.title = '';
-                }
-            }
+    // Ячейка вне диапазона маркеров или не токенизирована
+    if (isExcludedRow || !isTokenizedCell) {
+        td.textContent = cellInfo.original;
+        td.title = '';
+        return;
+    }
+    
+    // Токенизированная ячейка в диапазоне маркеров
+    if (AppState.viewMode === 'tokenized') {
+        // Показываем токен, подсказка — исходное значение
+        td.textContent = cellInfo.tokenized;
+        td.title = cellInfo.original != null ? String(cellInfo.original) : '';
+        if (td.title) cellClasses.push('cell-tooltip');
+    } else if (AppState.viewMode === 'both') {
+        // Показываем оба значения
+        const div = document.createElement('div');
+        div.className = 'cell-both-view';
+        
+        const origDiv = document.createElement('div');
+        origDiv.className = 'cell-original-value';
+        origDiv.textContent = cellInfo.original;
+        
+        const tokenDiv = document.createElement('div');
+        tokenDiv.className = 'cell-tokenized-value';
+        tokenDiv.textContent = cellInfo.tokenized;
+        
+        div.appendChild(origDiv);
+        div.appendChild(tokenDiv);
+        td.appendChild(div);
+        td.title = '';
+    } else {
+        // Режим 'original' — показываем исходное, подсказка — токен
+        td.textContent = cellInfo.original;
+        td.title = cellInfo.tokenized || '';
+        if (td.title) cellClasses.push('cell-tooltip');
+    }
 }
 
 /**
@@ -1824,6 +1832,10 @@ function initEventHandlers() {
     if (responseTextarea) {
         responseTextarea.addEventListener('input', processDetokenization);
         responseTextarea.addEventListener('scroll', syncResponseHighlightScroll);
+        // Дополнительная синхронизация для корректной работы каретки
+        responseTextarea.addEventListener('click', syncResponseHighlightScroll);
+        responseTextarea.addEventListener('keyup', syncResponseHighlightScroll);
+        responseTextarea.addEventListener('mouseup', syncResponseHighlightScroll);
     }
     
     // Делегированный обработчик для чекбоксов столбцов (избегаем повторного навешивания)

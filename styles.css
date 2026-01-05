@@ -574,16 +574,7 @@ button:disabled {
     align-items: stretch;
 }
 
-#responseTextarea {
-    width: 100%;
-    min-height: 0;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 14px;
-    resize: none;
-}
+/* Базовые стили responseTextarea переопределены в .textarea-wrapper textarea */
 
 .tokens-list-container {
     width: 300px;
@@ -924,21 +915,7 @@ input[type="file"] {
     flex-shrink: 0;
 }
 
-.detokenization-left #responseTextarea {
-    width: 100%;
-    flex: 1;
-    min-height: 0;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 14px;
-    resize: none;
-    box-sizing: border-box;
-    background: transparent;
-    color: transparent;
-    caret-color: #111;
-}
+/* Стили #responseTextarea определены в .textarea-wrapper textarea */
 
 .textarea-wrapper {
     position: relative;
@@ -961,14 +938,20 @@ input[type="file"] {
     line-height: 1.4;
     white-space: pre-wrap;
     word-wrap: break-word;
-    border: 1px solid #ddd;
+    overflow-wrap: break-word;
+    border: 1px solid transparent;
     border-radius: 4px;
     background: #fff;
     color: #333;
     overflow: auto;
+    overflow-x: hidden;
     pointer-events: none;
     box-sizing: border-box;
     z-index: 1;
+    letter-spacing: normal;
+    word-spacing: normal;
+    tab-size: 4;
+    -moz-tab-size: 4;
 }
 
 .textarea-wrapper textarea {
@@ -980,18 +963,29 @@ input[type="file"] {
     width: 100%;
     height: 100%;
     padding: 10px;
+    margin: 0;
     border: 1px solid #ddd;
     border-radius: 4px;
     background: transparent;
     color: transparent;
+    -webkit-text-fill-color: transparent;
     text-shadow: none;
     caret-color: #111;
     z-index: 2;
     font-family: monospace;
     font-size: 14px;
     line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
     resize: none;
     overflow: auto;
+    overflow-x: hidden;
+    box-sizing: border-box;
+    letter-spacing: normal;
+    word-spacing: normal;
+    tab-size: 4;
+    -moz-tab-size: 4;
 }
 
 .token-highlight-found {
