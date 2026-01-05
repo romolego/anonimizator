@@ -29,7 +29,8 @@ const AppState = {
     
     // Маркер токенизации
     tokenizationStartRow: 1,  // 1-based
-    tokenizationMarkerRow: 1, // 1-based
+    tokenizationMarkerRow: 1, // legacy, совпадает с tokenizationStartRow
+    tokenizationEndRow: 1,    // 1-based
     isMarkerEnabled: true,
     
     // Drag маркера
@@ -37,6 +38,7 @@ const AppState = {
     isMarkerDragging: false,
     markerDragActivated: false,
     markerDragCandidateRow: 1,
+    markerDragType: 'start',
     markerDragStart: { x: 0, y: 0 },
     markerDragHighlightedRow: null,
     
@@ -159,34 +161,59 @@ function getElement(id) {
  * Пересчёт стартовой строки токенизации на основе маркера
  */
 function recalculateTokenizationStartRow() {
+    recalculateTokenizationRange();
+}
+
+function recalculateTokenizationRange() {
     const totalRows = AppState.tableData.length;
     const safeTotal = Math.max(1, totalRows);
-    AppState.tokenizationMarkerRow = Math.max(1, Math.min(AppState.tokenizationMarkerRow, safeTotal));
+    AppState.tokenizationStartRow = Math.max(1, Math.min(AppState.tokenizationStartRow, safeTotal));
+    AppState.tokenizationEndRow = Math.max(1, Math.min(AppState.tokenizationEndRow, safeTotal));
 
-    AppState.tokenizationStartRow = AppState.isMarkerEnabled ? AppState.tokenizationMarkerRow : 1;
+    if (AppState.tokenizationStartRow > AppState.tokenizationEndRow) {
+        const tmp = AppState.tokenizationStartRow;
+        AppState.tokenizationStartRow = AppState.tokenizationEndRow;
+        AppState.tokenizationEndRow = tmp;
+    }
+    AppState.tokenizationMarkerRow = AppState.tokenizationStartRow;
 }
 
 /**
  * Получить 0-based индекс стартовой строки
  */
 function getTokenizationStartIndex() {
-    return Math.max(0, AppState.tokenizationStartRow - 1);
+    const start = AppState.isMarkerEnabled ? AppState.tokenizationStartRow : 1;
+    return Math.max(0, start - 1);
+}
+
+/**
+ * Получить 0-based индекс конечной строки
+ */
+function getTokenizationEndIndex() {
+    const totalRows = Math.max(1, AppState.tableData.length);
+    const end = AppState.isMarkerEnabled ? AppState.tokenizationEndRow : totalRows;
+    return Math.max(0, Math.min(totalRows - 1, end - 1));
 }
 
 /**
  * Проверка, исключена ли строка из токенизации
  */
 function isRowExcludedFromTokenization(rowIndex) {
-    return rowIndex < getTokenizationStartIndex();
+    return rowIndex < getTokenizationStartIndex() || rowIndex > getTokenizationEndIndex();
 }
 
 /**
  * Установка строки маркера
  */
-function setMarkerRow(rowNumber) {
+function setMarkerRow(type, rowNumber) {
     const maxRow = Math.max(1, AppState.tableData.length);
-    AppState.tokenizationMarkerRow = Math.max(1, Math.min(rowNumber, maxRow));
-    recalculateTokenizationStartRow();
+    const clamped = Math.max(1, Math.min(rowNumber, maxRow));
+    if (type === 'end') {
+        AppState.tokenizationEndRow = clamped;
+    } else {
+        AppState.tokenizationStartRow = clamped;
+    }
+    recalculateTokenizationRange();
     displayTable();
     setupTokenizationAnchor();
 }
@@ -196,7 +223,7 @@ function setMarkerRow(rowNumber) {
  */
 function toggleMarkerEnabled() {
     AppState.isMarkerEnabled = !AppState.isMarkerEnabled;
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
     displayTable();
     setupTokenizationAnchor();
 }
@@ -214,13 +241,18 @@ function tokenizeColumns() {
         return;
     }
 
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
+    const startRow = getTokenizationStartIndex();
+    const endRow = getTokenizationEndIndex();
     
     const hadTokensBefore = AppState.hasTokenizedData && AppState.tokenizedColumns.size > 0;
     let tokenCreated = false;
     
     AppState.selectedColumns.forEach(colIndex => {
-        AppState.tableData.forEach((rowData) => {
+        AppState.tableData.forEach((rowData, rowIndex) => {
+            if (rowIndex < startRow || rowIndex > endRow) {
+                return;
+            }
             const cellInfo = rowData[colIndex];
             if (!cellInfo) return;
             
@@ -367,15 +399,16 @@ function toggleColumnSelection(colIndex) {
  * Подготовка данных для экспорта
  */
 function prepareExportData() {
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
     const startRow = getTokenizationStartIndex();
+    const endRow = getTokenizationEndIndex();
     
     return AppState.tableData.map((rowData, rowIndex) => {
-        if (rowIndex < startRow) {
-            // Строки выше маркера — исходные значения
+        if (rowIndex < startRow || rowIndex > endRow) {
+            // Вне диапазона — исходные значения
             return rowData.map(cellInfo => cellInfo.original);
         }
-        // Остальные — токенизированные (если есть)
+        // Диапазон — токенизированные (если есть)
         return rowData.map(cellInfo => {
             if (cellInfo.isTokenized && cellInfo.tokenized) {
                 return cellInfo.tokenized;
@@ -383,34 +416,6 @@ function prepareExportData() {
             return cellInfo.original;
         });
     });
-}
-
-/**
- * Скачать CSV
- */
-function downloadCSV() {
-    if (AppState.tableData.length === 0) return;
-    
-    const { exportId, dateTime } = getExportContext();
-    const exportData = prepareExportData();
-    
-    // Конвертация в CSV
-    const csv = exportData.map(row => {
-        return row.map(cell => {
-            const str = String(cell);
-            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-                return '"' + str.replace(/"/g, '""') + '"';
-            }
-            return str;
-        }).join(',');
-    }).join('\n');
-    
-    // BOM для корректного отображения кириллицы
-    const bom = '\ufeff';
-    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-    downloadBlob(blob, `${exportId}_Таблица_${dateTime}.csv`);
-    
-    AppState.tableExported = true;
 }
 
 /**
@@ -434,15 +439,16 @@ function downloadXLSX() {
  * Скачать JSON-словарь
  */
 function downloadJSON() {
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
     const { exportId, dateTime } = getExportContext();
     
     // Сбор только используемых токенов
     const startRow = getTokenizationStartIndex();
     const usedTokens = new Set();
     
+    const endRow = getTokenizationEndIndex();
     AppState.tableData.forEach((rowData, rowIndex) => {
-        if (rowIndex >= startRow) {
+        if (rowIndex >= startRow && rowIndex <= endRow) {
             rowData.forEach(cellInfo => {
                 if (cellInfo.isTokenized && cellInfo.tokenized) {
                     usedTokens.add(cellInfo.tokenized);
@@ -476,23 +482,9 @@ async function downloadBundleZip() {
         return;
     }
     
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
     const { exportId, dateTime } = getExportContext();
     const exportData = prepareExportData();
-
-    // CSV
-    const csv = exportData.map(row => {
-        return row.map(cell => {
-            const str = String(cell);
-            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-                return '"' + str.replace(/"/g, '""') + '"';
-            }
-            return str;
-        }).join(',');
-    }).join('\n');
-
-    const bom = '\ufeff';
-    const csvContent = bom + csv;
 
     // XLSX как массив байт
     const wb = XLSX.utils.book_new();
@@ -504,8 +496,9 @@ async function downloadBundleZip() {
     const startRow = getTokenizationStartIndex();
     const usedTokens = new Set();
 
+    const endRow = getTokenizationEndIndex();
     AppState.tableData.forEach((rowData, rowIndex) => {
-        if (rowIndex >= startRow) {
+        if (rowIndex >= startRow && rowIndex <= endRow) {
             rowData.forEach(cellInfo => {
                 if (cellInfo.isTokenized && cellInfo.tokenized) {
                     usedTokens.add(cellInfo.tokenized);
@@ -526,7 +519,6 @@ async function downloadBundleZip() {
 
     // Формирование ZIP
     const zip = new JSZip();
-    zip.file(`${exportId}_Таблица_${dateTime}.csv`, csvContent);
     zip.file(`${exportId}_Таблица_${dateTime}.xlsx`, xlsxArray);
     zip.file(`${exportId}_Словарь_${dateTime}.json`, jsonContent);
 
@@ -564,11 +556,13 @@ function displayTable() {
     
     if (AppState.tableData.length === 0) return;
 
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
     clearMarkerDragHighlight();
     
     const maxCols = AppState.tableData[0].length;
     const showTokensView = AppState.viewMode === 'tokenized' || AppState.viewMode === 'both';
+    const startIdx = getTokenizationStartIndex();
+    const endIdx = getTokenizationEndIndex();
     
     // Создание заголовков
     const thead = document.createElement('thead');
@@ -611,7 +605,7 @@ function displayTable() {
             const cellInfo = rowData[i];
             
             const cellClasses = [];
-            const showColors = !isExcludedRow;
+            const showColors = true;
 
             if (showColors && AppState.tokenizedColumns.has(i)) {
                 cellClasses.push('column-tokenized');
@@ -830,23 +824,40 @@ function setupTokenizationAnchor() {
     const rowsWrapper = document.createElement('div');
     rowsWrapper.className = 'table-anchor-rows';
 
-    let markerRowElement = null;
-    
+    let markerRowElementStart = null;
+    let markerRowElementEnd = null;
+
     dataRows.forEach((rowEl, index) => {
         const anchorRow = document.createElement('div');
         anchorRow.className = 'table-anchor-row';
         anchorRow.style.height = `${rowEl.offsetHeight || 30}px`;
 
-        if (AppState.tokenizationMarkerRow === index + 1) {
-            const dot = document.createElement('div');
-            dot.className = 'anchor-dot active';
+        const rowNumber = index + 1;
+        if (rowNumber === AppState.tokenizationStartRow) {
+            const dotStart = document.createElement('div');
+            dotStart.className = 'anchor-dot active anchor-start';
             if (!AppState.isMarkerEnabled) {
-                dot.classList.add('disabled');
+                dotStart.classList.add('disabled');
             }
-            dot.title = AppState.isMarkerEnabled ? 'Начало токенизации' : 'Маркер выключен';
-            registerMarkerInteractions(dot, anchorRow);
-            anchorRow.appendChild(dot);
-            markerRowElement = anchorRow;
+            dotStart.title = AppState.isMarkerEnabled ? 'Начало диапазона токенизации' : 'Маркер выключен';
+            registerMarkerInteractions(dotStart, anchorRow, 'start');
+            anchorRow.appendChild(dotStart);
+            markerRowElementStart = anchorRow;
+        }
+        if (rowNumber === AppState.tokenizationEndRow) {
+            const dotEnd = document.createElement('div');
+            dotEnd.className = 'anchor-dot active anchor-end';
+            if (!AppState.isMarkerEnabled) {
+                dotEnd.classList.add('disabled');
+            }
+            dotEnd.title = AppState.isMarkerEnabled ? 'Конец диапазона токенизации' : 'Маркер выключен';
+            registerMarkerInteractions(dotEnd, anchorRow, 'end');
+            anchorRow.appendChild(dotEnd);
+            markerRowElementEnd = anchorRow;
+        }
+
+        if (rowNumber >= AppState.tokenizationStartRow && rowNumber <= AppState.tokenizationEndRow) {
+            anchorRow.classList.add('range-fill');
         }
 
         rowsWrapper.appendChild(anchorRow);
@@ -865,7 +876,7 @@ function setupTokenizationAnchor() {
     
     gutter.scrollTop = tableContainer.scrollTop;
 
-    if (!markerRowElement) {
+    if (!markerRowElementStart && !markerRowElementEnd) {
         clearMarkerGhost();
     }
 }
@@ -873,24 +884,25 @@ function setupTokenizationAnchor() {
 /**
  * Регистрация обработчиков взаимодействия с маркером
  */
-function registerMarkerInteractions(dotElement, rowElement) {
+function registerMarkerInteractions(dotElement, rowElement, type = 'start') {
     if (!dotElement || !rowElement) return;
 
     dotElement.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         e.stopPropagation();
         e.preventDefault();
-        startMarkerDrag(e, rowElement);
+        startMarkerDrag(e, rowElement, type);
     });
 }
 
 /**
  * Начало перетаскивания маркера
  */
-function startMarkerDrag(e, rowElement) {
+function startMarkerDrag(e, rowElement, type = 'start') {
     AppState.isMarkerDragging = true;
     AppState.markerDragActivated = false;
-    AppState.markerDragCandidateRow = AppState.tokenizationMarkerRow;
+    AppState.markerDragCandidateRow = type === 'start' ? AppState.tokenizationStartRow : AppState.tokenizationEndRow;
+    AppState.markerDragType = type;
     AppState.markerDragStart = { x: e.clientX, y: e.clientY };
 
     clearMarkerDragHighlight();
@@ -929,7 +941,7 @@ function onMarkerDragMove(e) {
     const candidate = resolveMarkerRowByPointer(e.clientY, rows, gutter);
     if (candidate !== null) {
         AppState.markerDragCandidateRow = candidate;
-        applyMarkerDragHighlight(candidate);
+        applyMarkerDragHighlight(candidate, AppState.markerDragType);
     }
 
     handleMarkerAutoScroll(e.clientY, gutter);
@@ -955,6 +967,7 @@ function endMarkerDrag() {
 
     const wasActiveDrag = AppState.markerDragActivated;
     const candidateRow = AppState.markerDragCandidateRow;
+    const dragType = AppState.markerDragType;
     
     AppState.isMarkerDragging = false;
     AppState.markerDragActivated = false;
@@ -962,7 +975,7 @@ function endMarkerDrag() {
     if (wasActiveDrag) {
         clearMarkerDragHighlight();
         clearMarkerGhost();
-        setMarkerRow(candidateRow);
+        setMarkerRow(dragType, candidateRow);
     } else {
         // Клик без drag — переключение маркера
         toggleMarkerEnabled();
@@ -1028,7 +1041,7 @@ function clearMarkerDragHighlight() {
 /**
  * Применение подсветки при перетаскивании
  */
-function applyMarkerDragHighlight(rowNumber) {
+function applyMarkerDragHighlight(rowNumber, type = 'start') {
     const gutter = getElement('tableAnchorGutter');
     const table = getElement('dataTable');
     if (!gutter || !table) return;
@@ -1046,14 +1059,15 @@ function applyMarkerDragHighlight(rowNumber) {
         if (tableRows[prevIdx]) tableRows[prevIdx].classList.remove('drag-hover');
     }
 
-    if (gutterRows[rowNumber - 1]) {
-        gutterRows[rowNumber - 1].classList.add('drag-hover');
+    const targetIdx = rowNumber - 1;
+    if (gutterRows[targetIdx]) {
+        gutterRows[targetIdx].classList.add('drag-hover');
     }
-    if (tableRows[rowNumber - 1]) {
-        tableRows[rowNumber - 1].classList.add('drag-hover');
+    if (tableRows[targetIdx]) {
+        tableRows[targetIdx].classList.add('drag-hover');
     }
 
-    showMarkerGhost(rowNumber);
+    showMarkerGhost(rowNumber, type);
     AppState.markerDragHighlightedRow = rowNumber;
 }
 
@@ -1078,7 +1092,7 @@ function handleMarkerAutoScroll(clientY, gutter) {
 /**
  * Показ ghost-элемента маркера
  */
-function showMarkerGhost(rowNumber) {
+function showMarkerGhost(rowNumber, type = 'start') {
     const gutter = getElement('tableAnchorGutter');
     if (!gutter) return;
     
@@ -1088,8 +1102,9 @@ function showMarkerGhost(rowNumber) {
 
     if (!AppState.markerGhostElement) {
         AppState.markerGhostElement = document.createElement('div');
-        AppState.markerGhostElement.className = 'anchor-dot drag-ghost';
     }
+
+    AppState.markerGhostElement.className = `anchor-dot drag-ghost ${type === 'end' ? 'anchor-end' : 'anchor-start'}`;
 
     if (AppState.markerGhostElement.parentElement !== targetRow) {
         AppState.markerGhostElement.remove();
@@ -1171,6 +1186,10 @@ function processDetokenization() {
     statsFragment.appendChild(stat3);
     
     statsSummary.appendChild(statsFragment);
+    const foundCounterEl = getElement('tokenCountFound');
+    const notFoundCounterEl = getElement('tokenCountNotFound');
+    if (foundCounterEl) foundCounterEl.textContent = foundCount;
+    if (notFoundCounterEl) notFoundCounterEl.textContent = notFoundCount;
     
     // Отображение списка токенов
     tokensListContainer.innerHTML = '';
@@ -1265,8 +1284,11 @@ function processDetokenization() {
             span.textContent = original;
             resultFragment.appendChild(span);
         } else {
-            // Токен не найден — оставляем как есть
-            resultFragment.appendChild(document.createTextNode(pos.token));
+            // Токен не найден — выделяем
+            const span = document.createElement('span');
+            span.className = 'token-unresolved';
+            span.textContent = pos.token;
+            resultFragment.appendChild(span);
         }
         
         lastIndex = pos.end;
@@ -1348,6 +1370,7 @@ function performClear() {
     AppState.viewMode = 'original';
     AppState.tokenizationStartRow = 1;
     AppState.tokenizationMarkerRow = 1;
+    AppState.tokenizationEndRow = 1;
     AppState.isMarkerEnabled = true;
     resetExportContext();
     AppState.tableExported = false;
@@ -1609,6 +1632,7 @@ function recognizeData() {
     AppState.hasAutoSwitchedToTokenView = false;
     AppState.viewMode = 'original';
     AppState.tokenizationMarkerRow = 1;
+    AppState.tokenizationEndRow = AppState.tableData.length || 1;
     AppState.isMarkerEnabled = true;
     recalculateTokenizationStartRow();
     resetExportContext();
@@ -1702,6 +1726,7 @@ function handleSheetChange() {
     AppState.hasAutoSwitchedToTokenView = false;
     AppState.viewMode = 'original';
     AppState.tokenizationMarkerRow = 1;
+    AppState.tokenizationEndRow = 1;
     AppState.isMarkerEnabled = true;
     AppState.tokenizationStartRow = 1;
     resetExportContext();

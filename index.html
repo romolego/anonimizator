@@ -91,7 +91,6 @@
             <div class="download-section" id="downloadSection" style="display: none; margin-top: 20px;">
                 <h3>Экспорт</h3>
                 <div class="download-buttons">
-                    <button class="download-button-data" onclick="downloadCSV()">Скачать CSV</button>
                     <button class="download-button-data" onclick="downloadXLSX()">Скачать XLSX</button>
                     <button class="download-button-dict" onclick="downloadJSON()">Скачать JSON-словарь</button>
                     <button class="download-button-zip" onclick="downloadBundleZip()">Скачать комплект в ZIP</button>
@@ -161,11 +160,11 @@
                         <div class="token-filters">
                             <label class="token-filter-checkbox token-filter-found" title="Показать распознанные">
                                 <input type="checkbox" checked onchange="toggleTokenFilter('found', this)">
-                                <span></span>
+                                <span id="tokenCountFound">0</span>
                             </label>
                             <label class="token-filter-checkbox token-filter-notfound" title="Показать нераспознанные">
                                 <input type="checkbox" checked onchange="toggleTokenFilter('notFound', this)">
-                                <span></span>
+                                <span id="tokenCountNotFound">0</span>
                             </label>
                         </div>
                     </div>
