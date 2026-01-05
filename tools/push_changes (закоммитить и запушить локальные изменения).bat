@@ -1,8 +1,9 @@
 @echo off
 chcp 65001 >nul
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
 set "REPO=D:\projects\anonimizator"
+set "GITIGNORE=%REPO%\.gitignore"
 
 where git >nul 2>&1
 if errorlevel 1 (
@@ -26,7 +27,19 @@ echo === REPO: %REPO%
 echo === BRANCH: %BRANCH%
 echo.
 
-echo === git status -sb (before)
+REM --- ensure .gitignore has required rules (root-only) ---
+call :ENSURE_GITIGNORE_LINE "/docs/"
+call :ENSURE_GITIGNORE_LINE "/tools/"
+call :ENSURE_GITIGNORE_LINE "/\!structure.txt"
+call :ENSURE_GITIGNORE_LINE "/\!структура папок.bat"
+
+REM --- if these paths were already committed, remove them from index (keep local files) ---
+echo === git rm --cached for local-only paths (if tracked)
+git -C "%REPO%" rm -r --cached --ignore-unmatch -- "docs" "tools" "!structure.txt" "!структура папок.bat"
+if errorlevel 1 goto :END_FAIL
+echo.
+
+echo === git status -sb BEFORE
 git -C "%REPO%" status -sb
 if errorlevel 1 goto :END_FAIL
 echo.
@@ -47,8 +60,8 @@ set "MSG="
 set /p "MSG=Commit message (Enter=update): "
 if "%MSG%"=="" set "MSG=update"
 
-echo === git commit -m "!MSG!"
-git -C "%REPO%" commit -m "!MSG!"
+echo === git commit -m "%MSG%"
+git -C "%REPO%" commit -m "%MSG%"
 if errorlevel 1 goto :END_FAIL
 
 :SYNC_AND_PUSH
@@ -78,7 +91,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo === git status -sb (after)
+echo === git status -sb AFTER
 git -C "%REPO%" status -sb
 echo.
 echo === HEAD:
@@ -86,6 +99,18 @@ git -C "%REPO%" log --oneline --decorate -n 1
 echo.
 echo OK: done
 goto :END_OK
+
+:ENSURE_GITIGNORE_LINE
+set "LINE=%~1"
+if not exist "%GITIGNORE%" (
+  >"%GITIGNORE%" echo # Local-only artifacts
+)
+
+findstr /l /x /c:"%LINE%" "%GITIGNORE%" >nul 2>&1
+if errorlevel 0 goto :eof
+
+>>"%GITIGNORE%" echo(%LINE%
+goto :eof
 
 :END_FAIL
 echo.
