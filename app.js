@@ -597,18 +597,21 @@ function displayTable() {
     AppState.tableData.forEach((rowData, rowIndex) => {
         const tr = document.createElement('tr');
         const isExcludedRow = isRowExcludedFromTokenization(rowIndex);
+        const rowInRange = !isExcludedRow; // Строка попадает в диапазон маркеров
         
         for (let i = 0; i < maxCols; i++) {
             const td = document.createElement('td');
             const cellInfo = rowData[i];
             
             const cellClasses = [];
-            const showColors = true;
 
-            if (showColors && AppState.tokenizedColumns.has(i)) {
-                cellClasses.push('column-tokenized');
-            } else if (showColors && AppState.selectedColumns.has(i)) {
-                cellClasses.push('column-selected');
+            // Подсветка применяется ТОЛЬКО если строка в диапазоне маркеров
+            if (rowInRange) {
+                if (AppState.tokenizedColumns.has(i)) {
+                    cellClasses.push('column-tokenized');
+                } else if (AppState.selectedColumns.has(i)) {
+                    cellClasses.push('column-selected');
+                }
             }
             
             // Отображение значения в зависимости от режима
