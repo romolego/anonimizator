@@ -29,7 +29,6 @@ const AppState = {
     
     // Маркер токенизации
     tokenizationStartRow: 1,  // 1-based
-    tokenizationMarkerRow: 1, // legacy, совпадает с tokenizationStartRow
     tokenizationEndRow: 1,    // 1-based
     isMarkerEnabled: true,
     
@@ -48,11 +47,19 @@ const AppState = {
     tableExported: false,
     dictionaryExported: false,
 
+    // Поведение распознавания
+    hasTableUserChanges: false,
+
     // Фильтры токенов
     tokenFilters: {
         found: true,
         notFound: true
-    }
+    },
+    
+    // Точечные исключения/включения ячеек
+    cellExclusions: new Map(), // Map<colIndex, Set<rowIndex>> — для токенизированных столбцов: исключённые ячейки
+    cellInclusions: new Map(), // Map<colIndex, Set<rowIndex>> — для НЕтокенизированных столбцов: включённые ячейки (queued - жёлтые)
+    cellInactivePointTokenized: new Map() // Map<colIndex, Set<rowIndex>> — точечно токенизированные ячейки в неактивном состоянии (белые, показывают исходное)
 };
 
 // Обработчики скролла (хранятся для корректного удаления)
@@ -129,11 +136,55 @@ function getExportTimestamp() {
 }
 
 /**
+ * Пометка того, что пользователь изменил состояние таблицы
+ */
+function markTableChanged() {
+    if (AppState.tableData && AppState.tableData.length > 0) {
+        AppState.hasTableUserChanges = true;
+    }
+}
+
+/**
  * Сбросить параметры экспорта
  */
 function resetExportContext() {
     AppState.currentExportId = null;
     AppState.exportDateTime = null;
+}
+
+/**
+ * Проверка, есть ли элементы в очереди токенизации
+ */
+function hasPendingTokenization() {
+    if (!AppState.tableData || AppState.tableData.length === 0) return false;
+
+    if (AppState.selectedColumns.size > 0) {
+        return true;
+    }
+
+    for (const [colIndex, rows] of AppState.cellInclusions.entries()) {
+        if (AppState.tokenizedColumns.has(colIndex)) {
+            // Для токенизированных столбцов cellInclusions используется как override ON,
+            // эти ячейки уже имеют токены и не ждут токенизации
+            continue;
+        }
+        if (rows && rows.size > 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Обновление активности кнопки токенизации
+ */
+function updateTokenizeButtonState() {
+    const button = getElement('tokenizeButton');
+    if (!button) return;
+
+    const shouldEnable = hasPendingTokenization();
+    button.disabled = !shouldEnable;
 }
 
 /**
@@ -158,12 +209,8 @@ function getElement(id) {
 // =============================================================================
 
 /**
- * Пересчёт стартовой строки токенизации на основе маркера
+ * Пересчёт диапазона токенизации на основе маркеров
  */
-function recalculateTokenizationStartRow() {
-    recalculateTokenizationRange();
-}
-
 function recalculateTokenizationRange() {
     const totalRows = AppState.tableData.length;
     const safeTotal = Math.max(1, totalRows);
@@ -175,7 +222,6 @@ function recalculateTokenizationRange() {
         AppState.tokenizationStartRow = AppState.tokenizationEndRow;
         AppState.tokenizationEndRow = tmp;
     }
-    AppState.tokenizationMarkerRow = AppState.tokenizationStartRow;
 }
 
 /**
@@ -233,24 +279,326 @@ function toggleMarkerEnabled() {
 // =============================================================================
 
 /**
- * Токенизация выбранных столбцов
- * Примечание: токенизируется ВЕСЬ столбец целиком, независимо от положения маркеров.
- * Маркеры влияют только на отображение и экспорт данных.
+ * Переключение точечной токенизации ячейки
  */
-function tokenizeColumns() {
-    if (AppState.selectedColumns.size === 0) {
-        alert('Выберите хотя бы один столбец для токенизации');
-        return;
+function toggleCellTokenization(rowIndex, colIndex) {
+    const rowData = AppState.tableData[rowIndex];
+    if (!rowData) return;
+    
+    const cellInfo = rowData[colIndex];
+    if (!cellInfo) return;
+    
+    const originalValue = cellInfo.original;
+    const hasOriginalValue = originalValue != null && String(originalValue).trim() !== '';
+    const valueStr = hasOriginalValue ? String(originalValue) : null;
+
+    /**
+     * Обход всех ячеек в текущем столбце с тем же исходным значением.
+     * Используется для применения ручного переключателя ко всем совпадениям
+     * внутри столбца (кластер значений).
+     */
+    function forEachMatchingCell(callback) {
+        if (!hasOriginalValue) {
+            // Для пустых значений сохраняем поведение "по одной ячейке"
+            callback(rowIndex, cellInfo);
+            return;
+        }
+
+        AppState.tableData.forEach((row, rIdx) => {
+            const otherCell = row[colIndex];
+            if (!otherCell) return;
+            if (String(otherCell.original) === valueStr) {
+                callback(rIdx, otherCell);
+            }
+        });
     }
 
+    const isColumnTokenized = AppState.tokenizedColumns.has(colIndex);
+    const hasToken = cellInfo.isTokenized && cellInfo.tokenized;
+    
+    if (isColumnTokenized) {
+        if (hasToken) {
+            // В токенизированном столбце: у токенизированной ячейки кликом управляем override
+            // Проверяем текущее состояние override
+            const overrideOff = AppState.cellExclusions.get(colIndex)?.has(rowIndex);
+            const overrideOn = AppState.cellInclusions.get(colIndex)?.has(rowIndex);
+            
+            // Определяем, попадает ли строка в диапазон маркеров
+            const startRow = getTokenizationStartIndex();
+            const endRow = getTokenizationEndIndex();
+            const rowInRange = rowIndex >= startRow && rowIndex <= endRow;
+            
+            if (overrideOff) {
+                // override OFF → override ON (включить токенизацию принудительно)
+                const exclusions = AppState.cellExclusions.get(colIndex);
+                const inclusions = (() => {
+                    if (!AppState.cellInclusions.has(colIndex)) {
+                        AppState.cellInclusions.set(colIndex, new Set());
+                    }
+                    return AppState.cellInclusions.get(colIndex);
+                })();
+
+                forEachMatchingCell((rIdx) => {
+                    if (exclusions) {
+                        exclusions.delete(rIdx);
+                    }
+                    inclusions.add(rIdx);
+                });
+
+                if (exclusions && exclusions.size === 0) {
+                    AppState.cellExclusions.delete(colIndex);
+                }
+            } else if (overrideOn) {
+                // override ON → сброс override (вернуться к поведению по диапазону)
+                const inclusions = AppState.cellInclusions.get(colIndex);
+                if (inclusions) {
+                    forEachMatchingCell((rIdx) => {
+                        inclusions.delete(rIdx);
+                    });
+                    if (inclusions.size === 0) {
+                        AppState.cellInclusions.delete(colIndex);
+                    }
+                }
+            } else {
+                // Нет override: выбор первого состояния зависит от диапазона
+                if (rowInRange) {
+                    // В пределах диапазона по умолчанию токен показан → первый клик = выключить (override OFF)
+                    if (!AppState.cellExclusions.has(colIndex)) {
+                        AppState.cellExclusions.set(colIndex, new Set());
+                    }
+                    const exclusions = AppState.cellExclusions.get(colIndex);
+                    forEachMatchingCell((rIdx) => {
+                        exclusions.add(rIdx);
+                    });
+                } else {
+                    // Вне диапазона по умолчанию токен скрыт → первый клик = включить (override ON)
+                    if (!AppState.cellInclusions.has(colIndex)) {
+                        AppState.cellInclusions.set(colIndex, new Set());
+                    }
+                    const inclusions = AppState.cellInclusions.get(colIndex);
+                    forEachMatchingCell((rIdx) => {
+                        inclusions.add(rIdx);
+                    });
+                }
+            }
+        } else {
+            // В токенизированном столбце, но у ячейки ещё нет токена (вне диапазона):
+            // при ручном включении сразу токенизируем ячейку (override ON)
+            if (!AppState.cellInclusions.has(colIndex)) {
+                AppState.cellInclusions.set(colIndex, new Set());
+            }
+            const inclusions = AppState.cellInclusions.get(colIndex);
+
+            if (inclusions.has(rowIndex)) {
+                // Убираем override ON (но токен остаётся в данных)
+                forEachMatchingCell((rIdx) => {
+                    inclusions.delete(rIdx);
+                });
+                if (inclusions.size === 0) {
+                    AppState.cellInclusions.delete(colIndex);
+                }
+                // Убираем токен, так как override ON убран и ячейка вне диапазона
+                // Но по ТЗ токены не удаляются - просто не показываются
+                // Поэтому просто убираем override, токен остаётся
+            } else {
+                // Добавляем override ON и сразу токенизируем ячейку
+                forEachMatchingCell((rIdx, otherCell) => {
+                    inclusions.add(rIdx);
+
+                    // Немедленная токенизация ячеек для override ON
+                    if (hasOriginalValue) {
+                        // Использование существующего токена или генерация нового
+                        if (AppState.tokenDictionary.has(valueStr)) {
+                            otherCell.tokenized = AppState.tokenDictionary.get(valueStr);
+                        } else {
+                            const token = generateToken();
+                            AppState.tokenDictionary.set(valueStr, token);
+                            AppState.reverseDictionary.set(token, valueStr);
+                            otherCell.tokenized = token;
+                        }
+                        
+                        otherCell.isTokenized = true;
+                        AppState.hasTokenizedData = true;
+                    }
+                });
+
+                // Обновляем доступность режимов отображения
+                updateViewModeAvailability();
+            }
+        }
+    } else {
+        // Столбец не токенизирован
+        if (hasToken) {
+            // Ячейка уже токенизирована - переключаем только активность (tokenizedActive ↔ tokenizedInactive)
+            // Запрещено переводить в жёлтую очередь (queued)
+            
+            // Удаляем из очереди, если была там (на случай некорректного состояния)
+            const inclusions = AppState.cellInclusions.get(colIndex);
+            if (inclusions && inclusions.has(rowIndex)) {
+                forEachMatchingCell((rIdx) => {
+                    inclusions.delete(rIdx);
+                });
+                if (inclusions.size === 0) {
+                    AppState.cellInclusions.delete(colIndex);
+                }
+            }
+            
+            // Переключаем активность
+            if (!AppState.cellInactivePointTokenized.has(colIndex)) {
+                AppState.cellInactivePointTokenized.set(colIndex, new Set());
+            }
+            const inactiveSet = AppState.cellInactivePointTokenized.get(colIndex);
+            
+            if (inactiveSet.has(rowIndex)) {
+                // Делаем активной (показываем токен) - tokenizedInactive → tokenizedActive
+                forEachMatchingCell((rIdx) => {
+                    inactiveSet.delete(rIdx);
+                });
+                if (inactiveSet.size === 0) {
+                    AppState.cellInactivePointTokenized.delete(colIndex);
+                }
+            } else {
+                // Делаем неактивной (показываем исходное) - tokenizedActive → tokenizedInactive
+                forEachMatchingCell((rIdx) => {
+                    inactiveSet.add(rIdx);
+                });
+            }
+        } else {
+            // Токена нет - переключаем очередь (none ↔ queued)
+            if (!AppState.cellInclusions.has(colIndex)) {
+                AppState.cellInclusions.set(colIndex, new Set());
+            }
+            const inclusions = AppState.cellInclusions.get(colIndex);
+            
+            if (inclusions.has(rowIndex)) {
+                // Убираем из очереди (queued → none)
+                forEachMatchingCell((rIdx) => {
+                    inclusions.delete(rIdx);
+                });
+                if (inclusions.size === 0) {
+                    AppState.cellInclusions.delete(colIndex);
+                }
+            } else {
+                // Добавляем в очередь (none → queued)
+                forEachMatchingCell((rIdx) => {
+                    inclusions.add(rIdx);
+                });
+            }
+        }
+    }
+
+    markTableChanged();
+    updateTokenizeButtonState();
+    displayTable();
+}
+
+/**
+ * Токенизация выбранных столбцов и точечно включённых ячеек
+ * Левые маркеры диапазона применяются только для целых столбцов.
+ * Точечные ячейки токенизируются независимо от диапазона.
+ */
+function tokenizeColumns() {
+    const hasSelectedColumns = AppState.selectedColumns.size > 0;
+    const hasCellInclusions = AppState.cellInclusions.size > 0;
+
     recalculateTokenizationRange();
+    const startRow = getTokenizationStartIndex();
+    const endRow = getTokenizationEndIndex();
     
     const hadTokensBefore = AppState.hasTokenizedData && AppState.tokenizedColumns.size > 0;
     let tokenCreated = false;
     
+    // Токенизация выбранных столбцов
+    // ВАЖНО: токены создаются для ВСЕХ строк столбца, независимо от диапазона.
+    // Диапазон влияет только на отображение, а не на создание токенов.
+    // Это гарантирует, что при расширении диапазона все ячейки будут иметь токены.
     AppState.selectedColumns.forEach(colIndex => {
-        // Токенизация ВСЕХ строк столбца, без учёта маркеров диапазона
         AppState.tableData.forEach((rowData, rowIndex) => {
+            const cellInfo = rowData[colIndex];
+            if (!cellInfo) return;
+            
+            // Проверка override для этого столбца
+            const overrideOff = AppState.cellExclusions.get(colIndex)?.has(rowIndex);
+            const overrideOn = AppState.cellInclusions.get(colIndex)?.has(rowIndex);
+            
+            // override OFF - пропускаем создание токена (но если токен уже есть, он остаётся)
+            if (overrideOff) {
+                return;
+            }
+            
+            // Проверяем, не токенизирована ли ячейка ранее
+            const wasPointTokenized = cellInfo.isTokenized && cellInfo.tokenized;
+            
+            // Если уже токенизирована - используем существующий токен (не пере-токенизируем)
+            if (wasPointTokenized) {
+                // Активируем ячейку (убираем из неактивных, если была там)
+                // Это обрабатывает случай: точечно токенизированная ячейка была выключена
+                const inactiveSet = AppState.cellInactivePointTokenized.get(colIndex);
+                if (inactiveSet && inactiveSet.has(rowIndex)) {
+                    inactiveSet.delete(rowIndex);
+                    if (inactiveSet.size === 0) {
+                        AppState.cellInactivePointTokenized.delete(colIndex);
+                    }
+                }
+                // Если это override ON, сохраняем его для визуальной обводки
+                tokenCreated = true;
+                return; // Не пере-токенизируем, используем существующий токен
+            }
+            
+            const originalValue = cellInfo.original;
+            
+            // Пропуск пустых значений
+            if (originalValue == null || String(originalValue).trim() === '') {
+                return;
+            }
+            
+            const valueStr = String(originalValue);
+            
+            // Использование существующего токена или генерация нового
+            // Токен создаётся для ВСЕХ строк, независимо от диапазона
+            if (AppState.tokenDictionary.has(valueStr)) {
+                cellInfo.tokenized = AppState.tokenDictionary.get(valueStr);
+            } else {
+                const token = generateToken();
+                AppState.tokenDictionary.set(valueStr, token);
+                AppState.reverseDictionary.set(token, valueStr);
+                cellInfo.tokenized = token;
+            }
+            
+            cellInfo.isTokenized = true;
+            tokenCreated = true;
+        });
+        
+        // Перемещение столбца из selected в tokenized
+        AppState.tokenizedColumns.add(colIndex);
+        AppState.selectedColumns.delete(colIndex);
+    });
+    
+    // Токенизация точечно включённых ячеек (независимо от диапазона и выбора столбца)
+    const pointTokenizedCols = new Set(); // Столбцы с точечно токенизированными ячейками
+    
+    // Создаём копию для итерации, чтобы можно было безопасно удалять элементы
+    const cellInclusionsCopy = new Map();
+    AppState.cellInclusions.forEach((rowIndices, colIndex) => {
+        cellInclusionsCopy.set(colIndex, new Set(rowIndices));
+    });
+    
+    cellInclusionsCopy.forEach((rowIndices, colIndex) => {
+        const isColumnTokenized = AppState.tokenizedColumns.has(colIndex);
+        
+        // Для токенизированного столбца override ON обрабатывается в основном цикле
+        // Здесь обрабатываем только точечные включения для нетокенизированных столбцов
+        if (isColumnTokenized) {
+            // Не трогаем override ON для токенизированных столбцов - они должны сохраниться
+            return;
+        }
+        
+        const processedRows = new Set(); // Ячейки, которые были обработаны в этом цикле
+        
+        rowIndices.forEach(rowIndex => {
+            const rowData = AppState.tableData[rowIndex];
+            if (!rowData) return;
+            
             const cellInfo = rowData[colIndex];
             if (!cellInfo) return;
             
@@ -275,11 +623,34 @@ function tokenizeColumns() {
             
             cellInfo.isTokenized = true;
             tokenCreated = true;
+            pointTokenizedCols.add(colIndex);
+            processedRows.add(rowIndex);
         });
         
-        // Перемещение столбца из selected в tokenized
-        AppState.tokenizedColumns.add(colIndex);
-        AppState.selectedColumns.delete(colIndex);
+        // Удаляем только обработанные ячейки из cellInclusions после токенизации
+        // (они теперь токенизированы и должны стать активными - зелёными)
+        if (processedRows.size > 0) {
+            const currentInclusions = AppState.cellInclusions.get(colIndex);
+            if (currentInclusions) {
+                processedRows.forEach(rowIndex => {
+                    currentInclusions.delete(rowIndex);
+                });
+                if (currentInclusions.size === 0) {
+                    AppState.cellInclusions.delete(colIndex);
+                }
+            }
+        }
+        
+        // Убираем также из неактивных, если были там (активируем их)
+        const inactiveSet = AppState.cellInactivePointTokenized.get(colIndex);
+        if (inactiveSet) {
+            processedRows.forEach(rowIndex => {
+                inactiveSet.delete(rowIndex);
+            });
+            if (inactiveSet.size === 0) {
+                AppState.cellInactivePointTokenized.delete(colIndex);
+            }
+        }
     });
     
     AppState.hasTokenizedData = AppState.hasTokenizedData || tokenCreated;
@@ -294,7 +665,7 @@ function tokenizeColumns() {
         downloadSection.style.display = 'block';
     }
     
-            updateViewModeAvailability();
+    updateViewModeAvailability();
     
     // Автопереключение в режим токенов при первой токенизации
     if (!AppState.hasAutoSwitchedToTokenView && !hadTokensBefore && hasTokensNow) {
@@ -305,6 +676,10 @@ function tokenizeColumns() {
         }
         AppState.hasAutoSwitchedToTokenView = true;
     }
+    
+    // После применения токенизации пересчитываем состояние кнопки:
+    // если очередь на новую токенизацию пуста, кнопка должна стать неактивной.
+    updateTokenizeButtonState();
     
     displayTable();
     setupTableScrollSync();
@@ -356,6 +731,11 @@ function untokenizeColumn(colIndex) {
     
     AppState.tokenizedColumns.delete(colIndex);
     
+    // Очистка точечных отметок для этого столбца
+    AppState.cellExclusions.delete(colIndex);
+    AppState.cellInclusions.delete(colIndex);
+    AppState.cellInactivePointTokenized.delete(colIndex);
+    
     // Сброс состояния если нет токенизированных столбцов
     if (AppState.tokenizedColumns.size === 0) {
         AppState.hasTokenizedData = false;
@@ -371,6 +751,7 @@ function untokenizeColumn(colIndex) {
         }
     }
 
+    updateTokenizeButtonState();
     updateViewModeAvailability();
 }
 
@@ -385,7 +766,9 @@ function toggleColumnSelection(colIndex) {
     } else {
         AppState.selectedColumns.add(colIndex);
     }
-    
+
+    markTableChanged();
+    updateTokenizeButtonState();
     displayTable();
 }
 
@@ -402,15 +785,47 @@ function prepareExportData() {
     const endRow = getTokenizationEndIndex();
     
     return AppState.tableData.map((rowData, rowIndex) => {
-        if (rowIndex < startRow || rowIndex > endRow) {
-            // Вне диапазона — исходные значения
-            return rowData.map(cellInfo => cellInfo.original);
-        }
-        // Диапазон — токенизированные (если есть)
-        return rowData.map(cellInfo => {
-            if (cellInfo.isTokenized && cellInfo.tokenized) {
+        return rowData.map((cellInfo, colIndex) => {
+            const isColumnTokenized = AppState.tokenizedColumns.has(colIndex);
+            const hasToken = cellInfo.isTokenized && cellInfo.tokenized;
+            
+            // Определение override для токенизированного столбца
+            const overrideOff = isColumnTokenized && AppState.cellExclusions.get(colIndex)?.has(rowIndex);
+            const overrideOn = isColumnTokenized && AppState.cellInclusions.get(colIndex)?.has(rowIndex);
+            
+            // Для нетокенизированного столбца
+            const isInactivePoint = !isColumnTokenized && AppState.cellInactivePointTokenized.get(colIndex)?.has(rowIndex);
+            const hasPointToken = hasToken && !isColumnTokenized;
+            
+            // Приоритет экспорта: override OFF → override ON → диапазон → точечные → обычное
+            if (overrideOff) {
+                // override OFF → исходное
+                return cellInfo.original;
+            }
+            
+            if (overrideOn && hasToken) {
+                // override ON → токен
                 return cellInfo.tokenized;
             }
+            
+            // Неактивная точечно токенизированная ячейка → исходное
+            if (hasPointToken && isInactivePoint) {
+                return cellInfo.original;
+            }
+            
+            // Активная точечно токенизированная ячейка → токен
+            if (hasPointToken && !isInactivePoint) {
+                return cellInfo.tokenized;
+            }
+            
+            // Столбец токенизирован целиком без override → применить диапазон
+            if (isColumnTokenized && hasToken) {
+                const inRange = rowIndex >= startRow && rowIndex <= endRow;
+                if (inRange) {
+                    return cellInfo.tokenized;
+                }
+            }
+            
             return cellInfo.original;
         });
     });
@@ -431,29 +846,76 @@ function downloadXLSX() {
     XLSX.writeFile(wb, `${exportId}_Таблица_${dateTime}.xlsx`);
     
     AppState.tableExported = true;
+    markTableChanged();
+}
+
+/**
+ * Сбор используемых токенов для экспорта словаря
+ * Возвращает Set токенов, которые фактически используются согласно правилам экспорта
+ */
+function collectUsedTokensForExport() {
+    recalculateTokenizationRange();
+    const startRow = getTokenizationStartIndex();
+    const endRow = getTokenizationEndIndex();
+    const usedTokens = new Set();
+    
+    AppState.tableData.forEach((rowData, rowIndex) => {
+        rowData.forEach((cellInfo, colIndex) => {
+            if (!cellInfo.isTokenized || !cellInfo.tokenized) return;
+            
+            const isColumnTokenized = AppState.tokenizedColumns.has(colIndex);
+            const overrideOff = isColumnTokenized && AppState.cellExclusions.get(colIndex)?.has(rowIndex);
+            const overrideOn = isColumnTokenized && AppState.cellInclusions.get(colIndex)?.has(rowIndex);
+            const isInactivePoint = !isColumnTokenized && AppState.cellInactivePointTokenized.get(colIndex)?.has(rowIndex);
+            const hasPointToken = !isColumnTokenized;
+            
+            // override OFF → пропускаем
+            if (overrideOff) {
+                return;
+            }
+            
+            // Неактивная точечно токенизированная ячейка → пропускаем
+            if (hasPointToken && isInactivePoint) {
+                return;
+            }
+            
+            // Для нетокенизированного столбца: точечно включённая ячейка (queued) → пропускаем (ещё не токенизирована)
+            if (!isColumnTokenized && AppState.cellInclusions.get(colIndex)?.has(rowIndex)) {
+                return;
+            }
+            
+            // Столбец токенизирован целиком
+            if (isColumnTokenized) {
+                if (overrideOn) {
+                    // override ON → добавляем токен независимо от диапазона
+                    usedTokens.add(cellInfo.tokenized);
+                } else {
+                    // Нет override → проверяем диапазон
+                    const inRange = rowIndex >= startRow && rowIndex <= endRow;
+                    if (inRange) {
+                        usedTokens.add(cellInfo.tokenized);
+                    }
+                }
+                return;
+            }
+            
+            // Точечно токенизированная активная ячейка → добавляем токен
+            if (hasPointToken && !isInactivePoint) {
+                usedTokens.add(cellInfo.tokenized);
+            }
+        });
+    });
+    
+    return usedTokens;
 }
 
 /**
  * Скачать JSON-словарь
  */
 function downloadJSON() {
-    recalculateTokenizationRange();
     const { exportId, dateTime } = getExportContext();
     
-    // Сбор только используемых токенов
-    const startRow = getTokenizationStartIndex();
-    const usedTokens = new Set();
-    
-    const endRow = getTokenizationEndIndex();
-    AppState.tableData.forEach((rowData, rowIndex) => {
-        if (rowIndex >= startRow && rowIndex <= endRow) {
-            rowData.forEach(cellInfo => {
-                if (cellInfo.isTokenized && cellInfo.tokenized) {
-                    usedTokens.add(cellInfo.tokenized);
-                }
-            });
-        }
-    });
+    const usedTokens = collectUsedTokensForExport();
     
     const dict = {};
     usedTokens.forEach(token => {
@@ -466,7 +928,7 @@ function downloadJSON() {
     const json = JSON.stringify(dict, null, 2);
     const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
     downloadBlob(blob, `${exportId}_Словарь_${dateTime}.json`);
-    
+
     AppState.dictionaryExported = true;
 }
 
@@ -490,20 +952,8 @@ async function downloadBundleZip() {
     XLSX.utils.book_append_sheet(wb, ws, 'Tokenized');
     const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 
-    // JSON-словарь
-    const startRow = getTokenizationStartIndex();
-    const usedTokens = new Set();
-
-    const endRow = getTokenizationEndIndex();
-    AppState.tableData.forEach((rowData, rowIndex) => {
-        if (rowIndex >= startRow && rowIndex <= endRow) {
-            rowData.forEach(cellInfo => {
-                if (cellInfo.isTokenized && cellInfo.tokenized) {
-                    usedTokens.add(cellInfo.tokenized);
-                }
-            });
-        }
-    });
+    // JSON-словарь (по тем же правилам, что и в downloadJSON)
+    const usedTokens = collectUsedTokensForExport();
 
     const dict = {};
     usedTokens.forEach(token => {
@@ -544,6 +994,119 @@ function downloadBlob(blob, filename) {
 // =============================================================================
 
 /**
+ * Определение состояния ячейки для отображения
+ * Единый источник правды для определения состояния ячейки
+ * Возвращает объект с полной информацией о состоянии
+ */
+function getCellDisplayState(rowIndex, colIndex, cellInfo) {
+    const isColumnTokenized = AppState.tokenizedColumns.has(colIndex);
+    const hasToken = cellInfo && cellInfo.isTokenized && cellInfo.tokenized;
+    
+    // Проверка диапазона маркеров (используется только для токенизированных столбцов без override)
+    const startIdx = getTokenizationStartIndex();
+    const endIdx = getTokenizationEndIndex();
+    const rowInRange = rowIndex >= startIdx && rowIndex <= endIdx;
+    
+    // Определение точечных override для токенизированного столбца
+    const overrideOff = isColumnTokenized && AppState.cellExclusions.get(colIndex)?.has(rowIndex);
+    const overrideOn = isColumnTokenized && AppState.cellInclusions.get(colIndex)?.has(rowIndex);
+    
+    // Для нетокенизированного столбца
+    const isIncluded = !isColumnTokenized && AppState.cellInclusions.get(colIndex)?.has(rowIndex);
+    const isInactivePoint = !isColumnTokenized && AppState.cellInactivePointTokenized.get(colIndex)?.has(rowIndex);
+    const hasPointToken = hasToken && !isColumnTokenized;
+    
+    // Приоритет определения состояния:
+    // 1. override OFF (для токенизированного столбца)
+    // 2. override ON (для токенизированного столбца)
+    // 3. диапазон маркеров (для токенизированного столбца без override)
+    // 4. точечная токенизация (для нетокенизированного столбца)
+    // 5. очередь (queued) или выбранный столбец
+    
+    let backgroundColor = null; // null = белый (по умолчанию)
+    let shouldShowToken = false;
+    let hasOverride = false;
+    let markerClass = null;
+    
+    if (isColumnTokenized) {
+        // Токенизированный столбец
+        if (overrideOff) {
+            // override OFF: белый фон, исходное значение, обводка
+            backgroundColor = null;
+            shouldShowToken = false;
+            hasOverride = true;
+            markerClass = 'marker-excluded';
+        } else if (overrideOn) {
+            // override ON: зелёный фон, токен, обводка
+            backgroundColor = 'column-tokenized';
+            shouldShowToken = true;
+            hasOverride = true;
+            markerClass = 'marker-tokenized';
+        } else {
+            // Нет override: действует диапазон
+            if (rowInRange && hasToken) {
+                // Внутри диапазона и есть токен → зелёный
+                backgroundColor = 'column-tokenized';
+                shouldShowToken = true;
+                markerClass = 'marker-tokenized';
+            } else {
+                // Вне диапазона → белый, исходное значение
+                backgroundColor = null;
+                shouldShowToken = false;
+                markerClass = null; // серый по умолчанию
+            }
+        }
+    } else if (hasPointToken) {
+        // Точечно токенизированная ячейка (не в токенизированном столбце)
+        hasOverride = true;
+        if (isInactivePoint) {
+            // Неактивная (показывает исходное) - белый фон, серый маркер
+            backgroundColor = null;
+            shouldShowToken = false;
+            markerClass = 'marker-excluded';
+        } else {
+            // Активная (показывает токен) - зелёный фон, зелёный маркер
+            backgroundColor = 'column-tokenized';
+            shouldShowToken = true;
+            markerClass = 'marker-tokenized';
+        }
+    } else {
+        // Столбец не токенизирован целиком
+        if (isIncluded) {
+            // Ячейка в очереди — жёлтая
+            backgroundColor = 'column-selected';
+            shouldShowToken = false;
+            markerClass = 'marker-selected';
+        } else if (AppState.selectedColumns.has(colIndex) && rowInRange) {
+            // Выбранный столбец в диапазоне — жёлтый
+            backgroundColor = 'column-selected';
+            shouldShowToken = false;
+            markerClass = null; // серый по умолчанию для выбранных
+        } else {
+            // Обычное состояние
+            backgroundColor = null;
+            shouldShowToken = false;
+            markerClass = null;
+        }
+    }
+    
+    return {
+        isColumnTokenized,
+        hasToken,
+        rowInRange,
+        overrideOff,
+        overrideOn,
+        hasOverride,
+        isIncluded,
+        isInactivePoint,
+        hasPointToken,
+        backgroundColor,
+        shouldShowToken,
+        markerClass
+    };
+}
+
+/**
  * Отображение таблицы с использованием DocumentFragment для производительности
  */
 function displayTable() {
@@ -558,9 +1121,6 @@ function displayTable() {
     clearMarkerDragHighlight();
     
     const maxCols = AppState.tableData[0].length;
-    const showTokensView = AppState.viewMode === 'tokenized' || AppState.viewMode === 'both';
-    const startIdx = getTokenizationStartIndex();
-    const endIdx = getTokenizationEndIndex();
     
     // Создание заголовков
     const thead = document.createElement('thead');
@@ -596,31 +1156,51 @@ function displayTable() {
     
     AppState.tableData.forEach((rowData, rowIndex) => {
         const tr = document.createElement('tr');
-        const isExcludedRow = isRowExcludedFromTokenization(rowIndex);
-        const rowInRange = !isExcludedRow; // Строка попадает в диапазон маркеров
         
         for (let i = 0; i < maxCols; i++) {
             const td = document.createElement('td');
-            const cellInfo = rowData[i];
+            const cellInfo = rowData[i] || { original: null, tokenized: null, isTokenized: false };
             
+            // Получение состояния ячейки через единую функцию
+            const cellState = getCellDisplayState(rowIndex, i, cellInfo);
+            
+            // Применение классов стилей
             const cellClasses = [];
-
-            // Подсветка применяется ТОЛЬКО если строка в диапазоне маркеров
-            if (rowInRange) {
-                if (AppState.tokenizedColumns.has(i)) {
-                    cellClasses.push('column-tokenized');
-                } else if (AppState.selectedColumns.has(i)) {
-                    cellClasses.push('column-selected');
-                }
+            if (cellState.backgroundColor) {
+                cellClasses.push(cellState.backgroundColor);
             }
-            
-            // Отображение значения в зависимости от режима
-            renderCellContent(td, cellInfo, isExcludedRow, cellClasses);
+            if (cellState.hasOverride) {
+                cellClasses.push('cell-override');
+            }
             
             if (cellClasses.length > 0) {
                 td.className = cellClasses.join(' ');
             }
             
+            // Отображение содержимого ячейки
+            renderCellContent(
+                td, 
+                cellInfo, 
+                cellState
+            );
+            
+            // Добавление маркера справа
+            const marker = document.createElement('div');
+            marker.className = 'cell-marker';
+            marker.dataset.rowIndex = rowIndex;
+            marker.dataset.colIndex = i;
+            
+            if (cellState.markerClass) {
+                marker.classList.add(cellState.markerClass);
+            }
+            
+            marker.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                toggleCellTokenization(rowIndex, i);
+            });
+            
+            td.appendChild(marker);
             tr.appendChild(td);
         }
         fragment.appendChild(tr);
@@ -637,50 +1217,80 @@ function displayTable() {
 }
 
 /**
- * Рендеринг содержимого ячейки (вынесено для читаемости)
+ * Рендеринг содержимого ячейки
  * Логика подсказок:
  * - Режим «Показать токенизированные» → показывает токен, hover показывает исходное
- * - Режим «Показать исходные» → показывает исходное, hover показывает токен (для токенизированных ячеек)
+ * - Режим «Показать исходные» → показывает только исходное значение, токены нигде не отображаются
  * - Режим «Показать оба» → показывает оба значения, подсказка не нужна
+ * 
+ * Приоритет отображения определяется в getCellDisplayState и передаётся через cellState.shouldShowToken
  */
-function renderCellContent(td, cellInfo, isExcludedRow, cellClasses) {
-    const isTokenizedCell = cellInfo.isTokenized && cellInfo.tokenized && AppState.hasTokenizedData;
+function renderCellContent(td, cellInfo, cellState) {
+    const hasToken = cellInfo && cellInfo.isTokenized && cellInfo.tokenized;
+    const originalValue = cellInfo ? cellInfo.original : null;
+    const tokenValue = hasToken ? cellInfo.tokenized : null;
     
-    // Ячейка вне диапазона маркеров или не токенизирована
-    if (isExcludedRow || !isTokenizedCell) {
-        td.textContent = cellInfo.original;
+    // В режиме «Показать исходные» всегда отображаем только исходные значения,
+    // полностью игнорируя токены и подсказки с токенами (по новому ТЗ).
+    if (AppState.viewMode === 'original') {
+        td.textContent = originalValue;
         td.title = '';
         return;
     }
     
-    // Токенизированная ячейка в диапазоне маркеров
-    if (AppState.viewMode === 'tokenized') {
-        // Показываем токен, подсказка — исходное значение
-        td.textContent = cellInfo.tokenized;
-        td.title = cellInfo.original != null ? String(cellInfo.original) : '';
-        if (td.title) cellClasses.push('cell-tooltip');
-    } else if (AppState.viewMode === 'both') {
-        // Показываем оба значения
-        const div = document.createElement('div');
-        div.className = 'cell-both-view';
-        
-        const origDiv = document.createElement('div');
-        origDiv.className = 'cell-original-value';
-        origDiv.textContent = cellInfo.original;
-        
-        const tokenDiv = document.createElement('div');
-        tokenDiv.className = 'cell-tokenized-value';
-        tokenDiv.textContent = cellInfo.tokenized;
-        
-        div.appendChild(origDiv);
-        div.appendChild(tokenDiv);
-        td.appendChild(div);
-        td.title = '';
+    // Для остальных режимов отображение основывается на cellState.shouldShowToken:
+    // shouldShowToken = true  → показываем токен
+    // shouldShowToken = false → показываем исходное значение
+    
+    const shouldShowToken = cellState.shouldShowToken && hasToken;
+    
+    if (shouldShowToken) {
+        // Показываем токен (с учётом режима отображения)
+        if (AppState.viewMode === 'tokenized') {
+            td.textContent = tokenValue;
+            td.title = originalValue != null ? String(originalValue) : '';
+            if (td.title) {
+                td.classList.add('cell-tooltip');
+            }
+        } else if (AppState.viewMode === 'both') {
+            // Режим "оба" - показываем оба значения
+            const div = document.createElement('div');
+            div.className = 'cell-both-view';
+            
+            const origDiv = document.createElement('div');
+            origDiv.className = 'cell-original-value';
+            origDiv.textContent = originalValue;
+            
+            const tokenDiv = document.createElement('div');
+            tokenDiv.className = 'cell-tokenized-value';
+            tokenDiv.textContent = tokenValue;
+            
+            div.appendChild(origDiv);
+            div.appendChild(tokenDiv);
+            td.appendChild(div);
+            td.title = '';
+        } else {
+            // Режим 'original', но shouldShowToken = true (override или активная точечная токенизация)
+            // Показываем токен (приоритет override/точечной токенизации над режимом отображения)
+            td.textContent = tokenValue;
+            td.title = originalValue != null ? String(originalValue) : '';
+            if (td.title) {
+                td.classList.add('cell-tooltip');
+            }
+        }
     } else {
-        // Режим 'original' — показываем исходное, подсказка — токен
-        td.textContent = cellInfo.original;
-        td.title = cellInfo.tokenized || '';
-        if (td.title) cellClasses.push('cell-tooltip');
+        // Показываем исходное значение
+        td.textContent = originalValue;
+        
+        // Если есть токен, показываем его в tooltip (для режима original)
+        if (hasToken && AppState.viewMode === 'original') {
+            td.title = tokenValue || '';
+            if (td.title) {
+                td.classList.add('cell-tooltip');
+            }
+        } else {
+            td.title = '';
+        }
     }
 }
 
@@ -734,7 +1344,7 @@ function updateTableFontSize() {
     sizeClasses.forEach(cls => tableContainer.classList.remove(cls));
     
     // Добавление нового класса
-    tableContainer.classList.add(`table-font-size-${fontSize.replace('px', 'px')}`);
+    tableContainer.classList.add(`table-font-size-${fontSize}`);
     
     // Прямое применение к элементам таблицы
     table.style.fontSize = fontSize;
@@ -1337,6 +1947,32 @@ function showClearModal() {
 }
 
 /**
+ * Показ модального окна подтверждения повторного распознавания
+ */
+function showRecognizeModal() {
+    const modal = getElement('recognizeModal');
+    if (!modal) return;
+    modal.classList.add('show');
+}
+
+/**
+ * Закрытие модального окна повторного распознавания
+ */
+function closeRecognizeModal() {
+    const modal = getElement('recognizeModal');
+    if (!modal) return;
+    modal.classList.remove('show');
+}
+
+/**
+ * Подтверждение повторного распознавания данных
+ */
+function confirmRecognizeReset() {
+    closeRecognizeModal();
+    recognizeData();
+}
+
+/**
  * Закрытие модального окна
  */
 function closeClearModal() {
@@ -1374,17 +2010,20 @@ function performClear() {
     AppState.currentDictionary.clear();
     AppState.selectedColumns.clear();
     AppState.tokenizedColumns.clear();
+    AppState.cellExclusions.clear();
+    AppState.cellInclusions.clear();
+    AppState.cellInactivePointTokenized.clear();
     AppState.hasTokenizedData = false;
     AppState.hasAutoSwitchedToTokenView = false;
     AppState.viewMode = 'original';
     AppState.tokenizationStartRow = 1;
-    AppState.tokenizationMarkerRow = 1;
     AppState.tokenizationEndRow = 1;
     AppState.isMarkerEnabled = true;
     resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
     AppState.tokenFilters = { found: true, notFound: true };
+    AppState.hasTableUserChanges = false;
     
     clearMarkerGhost();
     updateViewModeAvailability();
@@ -1410,6 +2049,8 @@ function performClear() {
         const el = getElement(id);
         if (el) el.style[config.style] = config.value;
     });
+
+    updateTokenizeButtonState();
     
     const dataTable = getElement('dataTable');
     if (dataTable) dataTable.innerHTML = '';
@@ -1590,6 +2231,34 @@ function copyToClipboard(text, button) {
 // =============================================================================
 
 /**
+ * Обработчик нажатия на кнопку "Распознать данные"
+ * Разделяет первичное и повторное поведение
+ */
+function handleRecognizeButtonClick() {
+    if (!AppState.workbook) {
+        alert('Сначала выберите файл');
+        return;
+    }
+
+    const hasTable = Array.isArray(AppState.tableData) && AppState.tableData.length > 0;
+
+    // Первичное распознавание - таблица ещё не построена
+    if (!hasTable) {
+        recognizeData();
+        return;
+    }
+
+    // Если таблица уже есть, но пользователь ещё не вносил изменений — распознаём без подтверждения
+    if (!AppState.hasTableUserChanges) {
+        recognizeData();
+        return;
+    }
+
+    // Таблица уже построена и были любые действия пользователя — спрашиваем подтверждение
+    showRecognizeModal();
+}
+
+/**
  * Распознавание данных (построение таблицы)
  */
 function recognizeData() {
@@ -1637,23 +2306,26 @@ function recognizeData() {
     // Сброс состояния
     AppState.selectedColumns.clear();
     AppState.tokenizedColumns.clear();
+    AppState.cellExclusions.clear();
+    AppState.cellInclusions.clear();
+    AppState.cellInactivePointTokenized.clear();
     AppState.hasTokenizedData = false;
     AppState.hasAutoSwitchedToTokenView = false;
     AppState.viewMode = 'original';
-    AppState.tokenizationMarkerRow = 1;
     AppState.tokenizationEndRow = AppState.tableData.length || 1;
     AppState.isMarkerEnabled = true;
-    recalculateTokenizationStartRow();
+    recalculateTokenizationRange();
     resetExportContext();
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
     AppState.tokenFilters = { found: true, notFound: true };
+    AppState.hasTableUserChanges = false;
     
     const viewModeSelect = getElement('viewModeSelect');
     if (viewModeSelect) {
         viewModeSelect.value = 'original';
     }
-    
+
     // Показ UI элементов
     const uiElements = {
         viewModeWrapper: 'flex',
@@ -1666,8 +2338,9 @@ function recognizeData() {
         const el = getElement(id);
         if (el) el.style.display = display;
     });
-    
+
     updateViewModeAvailability();
+    updateTokenizeButtonState();
     displayTable();
     setupTableScrollSync();
     setupTokenizationAnchor();
@@ -1730,11 +2403,13 @@ function handleSheetChange() {
     // Сброс состояния при смене листа
     AppState.selectedColumns.clear();
     AppState.tokenizedColumns.clear();
+    AppState.cellExclusions.clear();
+    AppState.cellInclusions.clear();
+    AppState.cellInactivePointTokenized.clear();
     AppState.tableData = [];
     AppState.hasTokenizedData = false;
     AppState.hasAutoSwitchedToTokenView = false;
     AppState.viewMode = 'original';
-    AppState.tokenizationMarkerRow = 1;
     AppState.tokenizationEndRow = 1;
     AppState.isMarkerEnabled = true;
     AppState.tokenizationStartRow = 1;
@@ -1742,6 +2417,7 @@ function handleSheetChange() {
     AppState.tableExported = false;
     AppState.dictionaryExported = false;
     AppState.tokenFilters = { found: true, notFound: true };
+    AppState.hasTableUserChanges = false;
     
     const viewModeSelect = getElement('viewModeSelect');
     if (viewModeSelect) {
@@ -1749,7 +2425,8 @@ function handleSheetChange() {
     }
     
     updateViewModeAvailability();
-    
+    updateTokenizeButtonState();
+
     const elementsToHide = ['tableSection', 'viewModeWrapper', 'fontSizeWrapper', 'downloadSection'];
     elementsToHide.forEach(id => {
         const el = getElement(id);
@@ -1857,8 +2534,19 @@ function initEventHandlers() {
         });
     }
 
+    const recognizeModal = getElement('recognizeModal');
+    if (recognizeModal) {
+        recognizeModal.addEventListener('click', function(e) {
+            if (e.target === recognizeModal) {
+                closeRecognizeModal();
+            }
+        });
+    }
+
     updateViewModeAvailability();
+    updateTokenizeButtonState();
 }
 
 // Запуск инициализации при загрузке DOM
 document.addEventListener('DOMContentLoaded', initEventHandlers);
+

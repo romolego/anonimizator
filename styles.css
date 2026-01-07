@@ -24,6 +24,61 @@ h1 {
     color: #333;
 }
 
+.page-header {
+    margin-bottom: 32px;
+    margin-top: -20px;
+    padding: 24px 20px 20px 20px;
+    background-color: #fafafa;
+    border-bottom: 2px solid #e0e0e0;
+    border-radius: 4px 4px 0 0;
+}
+
+.page-title {
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    line-height: 1.2;
+}
+
+.header-icon {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 6px;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.header-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 18px;
+    height: 18px;
+    border: 2px solid white;
+    border-radius: 2px;
+    box-shadow: 
+        0 6px 0 -4px white,
+        6px 0 0 -4px white;
+}
+
+.page-subtitle {
+    font-size: 14px;
+    color: #555;
+    line-height: 1.5;
+    margin: 0;
+    width: 100%;
+    max-width: 100%;
+}
+
 h2 {
     margin-top: 30px;
     margin-bottom: 15px;
@@ -365,6 +420,7 @@ th, td {
     font-size: 12px;
     min-width: 150px;
     max-width: 400px;
+    position: relative; /* для абсолютного позиционирования маркера */
 }
 
 .table-font-size-10px th,
@@ -1307,6 +1363,63 @@ input[type="file"] {
 
 .modal-dialog .modal-button-confirm:hover {
     background-color: #c82333;
+}
+
+/* Маркер справа у ячейки */
+.cell-marker {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 70%;
+    background-color: #666;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    cursor: pointer;
+    border-radius: 3px;
+    z-index: 10;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.5), inset 0 0 2px rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+td:hover .cell-marker {
+    opacity: 1;
+}
+
+.cell-marker.marker-selected {
+    background-color: #d4a017; /* более тёмный жёлтый для лучшего контраста */
+    border-color: #b8860b;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.6), inset 0 0 2px rgba(255, 255, 255, 0.4), 0 0 3px rgba(212, 160, 23, 0.8);
+}
+
+.cell-marker.marker-tokenized {
+    background-color: #1e7e34; /* более тёмный зелёный для лучшего контраста */
+    border-color: #155724;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.6), inset 0 0 2px rgba(255, 255, 255, 0.4), 0 0 3px rgba(30, 126, 52, 0.8);
+}
+
+.cell-marker.marker-excluded {
+    background-color: #495057; /* более тёмный серый для лучшего контраста */
+    border-color: #343a40;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.5), inset 0 0 2px rgba(255, 255, 255, 0.3);
+}
+
+/* Обводка для точечно изменённых ячеек */
+.cell-override {
+    border: 2px solid #007bff !important;
+    box-shadow: inset 0 0 0 1px rgba(0, 123, 255, 0.3);
+}
+
+/* Обводка должна быть видна на всех фонах */
+.column-tokenized.cell-override {
+    border-color: #0056b3 !important;
+    box-shadow: inset 0 0 0 1px rgba(0, 86, 179, 0.4);
+}
+
+.column-selected.cell-override {
+    border-color: #b8860b !important;
+    box-shadow: inset 0 0 0 1px rgba(184, 134, 11, 0.4);
 }
 
 
